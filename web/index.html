@@ -1,0 +1,473 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>doom-ed · Study Coach</title>
+<meta name="description" content="AI study coach grounded in live Indus LMS data and the IB resource catalog. Three-phase pedagogy: Probe, Plan, Teach Loop.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230D3A35'/%3E%3Ctext x='16' y='23' font-family='Georgia,serif' font-style='italic' font-size='20' fill='%23E8A33D' text-anchor='middle'%3Ed%3C/text%3E%3C/svg%3E">
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+<link rel="preconnect" href="https://unpkg.com" crossorigin>
+
+<link rel="stylesheet" href="/assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous"
+      onerror="this.onerror=null;this.href='https://unpkg.com/katex@0.16.11/dist/katex.min.css';">
+
+<script>
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Theme bootstrap: avoid a flash of the wrong theme. Key: doomed.theme (light|dark). */
+(function () {
+  "use strict";
+  try {
+    var saved = localStorage.getItem("doomed.theme");
+    var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.setAttribute("data-theme", saved === "dark" || saved === "light" ? saved : (prefersDark ? "dark" : "light"));
+  } catch (e) {
+    document.documentElement.setAttribute("data-theme", "light");
+  }
+})();
+</script>
+
+<script>
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Vendor loader with CDN fallback (jsdelivr → unpkg; cdnjs → jsdelivr for PDF.js).
+   app.js must `await window.__vendorReady` before first render. Resolves to
+   { marked, katex, dompurify, mermaid, pdfjs } → boolean. Globals when loaded:
+   window.marked, window.katex, window.DOMPurify, window.mermaid, window.pdfjsLib. */
+(function () {
+  "use strict";
+  var SOURCES = {
+    marked: [
+      "https://cdn.jsdelivr.net/npm/marked@14.1.2/marked.min.js",
+      "https://unpkg.com/marked@14.1.2/marked.min.js"
+    ],
+    katex: [
+      "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js",
+      "https://unpkg.com/katex@0.16.11/dist/katex.min.js"
+    ],
+    dompurify: [
+      "https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js",
+      "https://unpkg.com/dompurify@3.1.7/dist/purify.min.js"
+    ],
+    mermaid: [
+      "https://cdn.jsdelivr.net/npm/mermaid@11.3.0/dist/mermaid.min.js",
+      "https://unpkg.com/mermaid@11.3.0/dist/mermaid.min.js"
+    ],
+    pdfjs: [
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js",
+      "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"
+    ]
+  };
+  var PDF_WORKERS = [
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js",
+    "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js"
+  ];
+
+  function loadOne(urls) {
+    return new Promise(function (resolve) {
+      var i = 0;
+      (function attempt() {
+        if (i >= urls.length) { resolve(false); return; }
+        var el = document.createElement("script");
+        el.src = urls[i++];
+        el.async = true;
+        el.onload = function () { resolve(true); };
+        el.onerror = function () { el.remove(); attempt(); };
+        document.head.appendChild(el);
+      })();
+    });
+  }
+
+  var names = Object.keys(SOURCES);
+  window.__vendorReady = Promise.all(names.map(function (n) { return loadOne(SOURCES[n]); }))
+    .then(function (results) {
+      var ok = {};
+      names.forEach(function (n, i) { ok[n] = results[i]; });
+      window.__vendors = ok;
+      if (ok.pdfjs) {
+        window.__PDFJS_WORKER_SRC = PDF_WORKERS[0];
+        window.__PDFJS_WORKER_FALLBACK = PDF_WORKERS[1];
+      }
+      return ok;
+    });
+})();
+</script>
+</head>
+<body>
+<noscript>
+  <p style="padding:20px;font-family:system-ui">doom-ed needs JavaScript to render lessons, interactive cards, and diagrams.</p>
+</noscript>
+
+<div class="app-shell">
+
+  <!-- ================================================================ LEFT: triage -->
+  <aside id="left-pane" class="pane-left" aria-label="Study coach triage">
+
+    <div class="brand-row">
+      <span class="brand-mark" aria-hidden="true">d</span>
+      <div class="brand-text"><b>doom-ed</b><small>Study coach</small></div>
+    </div>
+
+    <!-- Profile / auth -->
+    <div id="profile-card" class="profile-card" hidden>
+      <span id="profile-avatar" class="profile-avatar" aria-hidden="true">S</span>
+      <div class="profile-id">
+        <b id="profile-name">Student</b>
+        <span id="profile-email"></span>
+        <span id="profile-grade"></span>
+      </div>
+      <div class="profile-actions">
+        <button id="signout-btn" class="signout-btn" type="button">Sign out</button>
+      </div>
+    </div>
+    <button id="login-trigger" class="login-trigger" type="button">Sign in with Indus LMS</button>
+
+    <!-- What needs me now? -->
+    <section id="section-now" class="side-section" aria-labelledby="head-now">
+      <div class="side-head">
+        <h3 id="head-now">What needs me now?</h3>
+        <span id="count-now" class="count-badge" hidden>0</span>
+        <button id="refresh-triage-btn" class="side-action" type="button" title="Refresh live LMS data">Refresh</button>
+      </div>
+
+      <div class="triage-group" data-kind="overdue">
+        <div class="triage-group-head"><span class="dot"></span>Overdue <b id="count-overdue">0</b></div>
+        <ul id="list-overdue" class="triage-list"></ul>
+      </div>
+      <div class="triage-group" data-kind="due_soon">
+        <div class="triage-group-head"><span class="dot"></span>Due today &amp; tomorrow <b id="count-due-soon">0</b></div>
+        <ul id="list-due-soon" class="triage-list"></ul>
+      </div>
+      <div class="triage-group" data-kind="calendar">
+        <div class="triage-group-head"><span class="dot"></span>Today's calendar <b id="count-calendar">0</b></div>
+        <ul id="list-calendar-today" class="triage-list"></ul>
+      </div>
+      <div class="triage-group" data-kind="notifications">
+        <div class="triage-group-head"><span class="dot"></span>Unread notices <b id="count-unread">0</b></div>
+        <ul id="list-unread-notifs" class="triage-list"></ul>
+      </div>
+      <div class="attendance-row">
+        <span class="side-sublabel">Attendance</span>
+        <span id="attendance-pill" class="attendance-pill unknown">Not loaded</span>
+      </div>
+    </section>
+
+    <!-- What am I weak at? -->
+    <section id="section-weak" class="side-section" aria-labelledby="head-weak">
+      <div class="side-head">
+        <h3 id="head-weak">What am I weak at?</h3>
+        <span id="count-fix" class="count-badge" hidden>0</span>
+      </div>
+      <ul id="fix-list" class="fix-list">
+        <li class="side-empty">Fix list builds from graded EOL tests and FA rubric criteria.</li>
+      </ul>
+    </section>
+
+    <!-- Before next break -->
+    <section id="section-break" class="side-section" aria-labelledby="head-break">
+      <div class="side-head"><h3 id="head-break">Before next break</h3></div>
+      <p id="break-window" class="break-window"></p>
+      <ol id="break-queue" class="break-queue">
+        <li class="side-empty">Nothing queued yet.</li>
+      </ol>
+    </section>
+
+    <!-- Thread history -->
+    <section id="section-threads" class="side-section" aria-labelledby="head-threads">
+      <div class="side-head">
+        <h3 id="head-threads">Lessons</h3>
+        <button id="new-lesson-btn" class="side-action" type="button">+ New Lesson</button>
+      </div>
+      <ul id="thread-list" class="thread-list">
+        <li class="side-empty">No lessons yet.</li>
+      </ul>
+    </section>
+  </aside>
+
+  <!-- ============================================================== CENTER: chat -->
+  <main id="center-pane" class="pane-center">
+
+    <header class="chat-header">
+      <button id="left-toggle" class="icon-btn pane-toggle" type="button" aria-label="Open study triage" aria-controls="left-pane" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <div class="chat-heading">
+        <h1 id="thread-title">New lesson</h1>
+        <div class="chat-heading-meta">
+          <span id="phase-badge" class="phase-badge" data-phase="probe">Probe</span>
+          <span id="thread-subject" class="chat-subject" hidden></span>
+        </div>
+      </div>
+      <div id="attached-tray" class="attached-tray" aria-label="Files attached to this lesson"></div>
+      <div class="chat-actions">
+        <button id="log-toggle" class="btn ghost sm" type="button" aria-controls="log-drawer" aria-expanded="false">Lesson log</button>
+        <button id="settings-btn" class="icon-btn" type="button" aria-label="Model settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.08a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.08a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1.03Z"/></svg>
+        </button>
+        <button id="theme-toggle" class="icon-btn" type="button" aria-label="Toggle light and dark theme">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div id="message-list" class="message-list" role="log" aria-live="polite" aria-label="Lesson conversation">
+      <div id="empty-state" class="empty-state">
+        <div class="empty-mark" aria-hidden="true">d</div>
+        <h2>Start a lesson</h2>
+        <p>Ask about today's work, open a graded test you lost marks on, or say “teach me …”. The coach probes first, plans with you, then teaches one step at a time.</p>
+        <div class="empty-suggestions">
+          <button class="suggestion" type="button" data-prompt="Teach me one of the topics I scored lowest on, starting from basics.">Teach a weak topic</button>
+          <button class="suggestion" type="button" data-prompt="Walk me through what I need to finish before the next break.">Plan before the break</button>
+          <button class="suggestion" type="button" data-prompt="Give me an IB-style practice question on my weakest topic, then grade it.">Practice an IB question</button>
+        </div>
+      </div>
+    </div>
+
+    <footer class="composer">
+      <div id="composer-attachments" class="composer-attachments" aria-label="Attachments for the next message"></div>
+      <form id="composer-form" class="composer-form" autocomplete="off">
+        <button id="attach-btn" class="attach-btn" type="button" aria-label="Attach files" title="Attach files">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.4 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+        <input id="file-input" type="file" multiple hidden
+               accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.gif,.webp">
+        <textarea id="prompt-input" rows="1" placeholder="Ask for a lesson, a practice question, or “teach me …”" aria-label="Message the study coach"></textarea>
+        <button id="citation-badge" class="citation-badge" type="button" hidden
+                title="Page currently open in the file viewer — click to cite it">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg>
+          <span id="citation-label"></span>
+        </button>
+        <button id="send-btn" class="btn send-btn" type="submit">Send</button>
+      </form>
+      <div class="composer-hint"><span><kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line</span></div>
+    </footer>
+  </main>
+
+  <!-- ================================================== RIGHT: drawers / scrim -->
+  <aside id="log-drawer" class="drawer" aria-label="Live lesson log" inert aria-hidden="true">
+    <header class="drawer-head">
+      <div>
+        <h2>Live lesson log</h2>
+        <span class="drawer-sub">Obsidian-style Markdown · updates as you learn</span>
+      </div>
+      <button id="log-close" class="icon-btn drawer-close" type="button" aria-label="Close lesson log">×</button>
+    </header>
+    <div class="drawer-toolbar">
+      <div class="seg-toggle" role="tablist" aria-label="Log view">
+        <button id="log-view-rendered" class="on" type="button" role="tab" aria-selected="true">Rendered</button>
+        <button id="log-view-raw" type="button" role="tab" aria-selected="false">Markdown</button>
+      </div>
+      <button id="copy-log-btn" class="btn ghost sm" type="button">Copy Markdown</button>
+      <button id="download-log-btn" class="btn ghost sm" type="button">Download .md</button>
+    </div>
+    <div class="drawer-body">
+      <div id="log-empty" class="drawer-empty">Prompts, teaching prose, quiz results, and published diagrams are mirrored here as Obsidian callouts. Start a lesson to fill the log.</div>
+      <div id="log-preview" class="prose log-preview"></div>
+      <pre id="log-source" class="log-source" hidden></pre>
+    </div>
+  </aside>
+
+  <!-- Managed by viewer.js: file opened from a chip or citation deep-link -->
+  <aside id="viewer-drawer" class="drawer viewer-drawer" data-managed-by="viewer.js" aria-label="File viewer" inert aria-hidden="true"></aside>
+
+  <div id="scrim" class="scrim" aria-hidden="true"></div>
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+</div><!-- /.app-shell -->
+
+<!-- ============================================================== MODALS -->
+<dialog id="login-modal" class="modal" aria-labelledby="login-title">
+  <form id="login-form" method="dialog" novalidate>
+    <header class="modal-head">
+      <h2 id="login-title">Sign in to Indus LMS</h2>
+      <button id="login-close" class="icon-btn" type="button" aria-label="Close sign-in">×</button>
+    </header>
+    <p class="modal-sub">doom-ed reads your live courses, grades, and materials through this app's server. Credentials go only to your school's LMS; tokens are stored encrypted, server-side.</p>
+    <div class="modal-body">
+      <label class="field"><span>School email</span>
+        <input id="login-email" type="email" name="email" autocomplete="username" required placeholder="you@school.example">
+      </label>
+      <label class="field"><span>Password</span>
+        <input id="login-password" type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <p id="login-error" class="form-error" hidden></p>
+    </div>
+    <div class="modal-actions">
+      <button id="login-cancel" class="btn ghost" type="button">Cancel</button>
+      <button id="login-submit" class="btn" type="submit">Sign in</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="settings-modal" class="modal" aria-labelledby="settings-title">
+  <form id="settings-form" method="dialog" novalidate>
+    <header class="modal-head">
+      <h2 id="settings-title">Models &amp; endpoints</h2>
+      <button id="settings-close" class="icon-btn" type="button" aria-label="Close settings">×</button>
+    </header>
+    <p class="modal-sub">Any OpenAI-compatible endpoint works. Teacher drives the lesson, maker authors diagrams, researcher checks facts.</p>
+    <div class="modal-body">
+      <label class="field"><span>LLM_BASE_URL</span>
+        <input id="setting-base-url" type="url" inputmode="url" spellcheck="false" autocomplete="off" placeholder="https://openrouter.ai/api/v1">
+      </label>
+      <label class="field"><span>LLM_API_KEY — optional</span>
+        <input id="setting-api-key" type="password" autocomplete="new-password" spellcheck="false" placeholder="sk-…">
+        <small>Stored server-side with the rest of the runtime settings.</small>
+      </label>
+      <label class="field"><span>TEACHER_MODEL</span>
+        <input id="setting-teacher-model" type="text" spellcheck="false" autocomplete="off" placeholder="google/gemini-2.5-pro">
+      </label>
+      <label class="field"><span>MAKER_MODEL</span>
+        <input id="setting-maker-model" type="text" spellcheck="false" autocomplete="off" placeholder="google/gemini-2.5-flash">
+      </label>
+      <label class="field"><span>RESEARCHER_MODEL</span>
+        <input id="setting-researcher-model" type="text" spellcheck="false" autocomplete="off" placeholder="google/gemini-2.5-flash">
+      </label>
+      <p id="settings-status" class="settings-status" hidden></p>
+    </div>
+    <div class="modal-actions">
+      <button id="settings-cancel" class="btn ghost" type="button">Cancel</button>
+      <button id="settings-save" class="btn" type="submit">Save settings</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ===================================================== DOM CONTRACT TEMPLATES -->
+<!-- Clone targets for app.js / renderer.js / cards.js. Classes are styled in style.css;
+     ids/data-* attributes below are the stable contract. -->
+
+<template id="tpl-msg-user">
+  <div class="msg msg-user">
+    <div class="msg-body"><p class="msg-text"></p></div>
+    <div class="msg-meta">You</div>
+  </div>
+</template>
+
+<template id="tpl-msg-teacher">
+  <div class="msg msg-teacher">
+    <span class="msg-avatar" aria-hidden="true">d</span>
+    <div class="msg-body prose teacher-prose"></div>
+  </div>
+</template>
+
+<template id="tpl-file-chip">
+  <button class="file-chip" type="button" data-sha="" data-ref="" data-page="">
+    <span class="file-chip-icon">PDF</span>
+    <span class="file-chip-name"></span>
+    <span class="file-chip-page" hidden></span>
+  </button>
+</template>
+
+<template id="tpl-file-chip-pending">
+  <span class="file-chip file-chip-pending">
+    <span class="file-chip-icon">PDF</span>
+    <span class="file-chip-name"></span>
+    <span class="file-chip-page" hidden></span>
+    <button class="file-chip-remove" type="button" aria-label="Remove attachment">×</button>
+  </span>
+</template>
+
+<template id="tpl-quiz-card">
+  <div class="quiz-card interactive-card" data-call-id="">
+    <header class="card-head">
+      <span class="card-kicker">Knowledge check</span>
+      <span class="card-tag card-score" hidden></span>
+    </header>
+    <p class="quiz-question"></p>
+    <ul class="quiz-options"></ul>
+    <div class="grade-banner" hidden>
+      <span class="grade-icon" aria-hidden="true">✓</span>
+      <span class="grade-text"></span>
+    </div>
+    <div class="quiz-explanation" hidden>
+      <span class="quiz-explanation-label">Why</span>
+      <div class="quiz-explanation-body"></div>
+    </div>
+    <footer class="card-foot">
+      <button class="btn submit-quiz" type="button">Submit answer</button>
+      <span class="card-token-note">Graded server-side · “I don't know” is free</span>
+    </footer>
+  </div>
+</template>
+
+<template id="tpl-quiz-option">
+  <li>
+    <button class="quiz-option" type="button" data-index="">
+      <span class="quiz-option-index"></span>
+      <span class="quiz-option-body">
+        <span class="quiz-option-label"></span>
+        <small hidden></small>
+      </span>
+    </button>
+  </li>
+</template>
+
+<template id="tpl-ask-card">
+  <div class="ask-card interactive-card" data-call-id="">
+    <header class="card-head">
+      <span class="card-kicker">Your call</span>
+    </header>
+    <p class="ask-context" hidden></p>
+    <p class="ask-question"></p>
+    <div class="ask-options"></div>
+    <div class="ask-other">
+      <input class="ask-other-input" type="text" placeholder="Other — type your own…" aria-label="Your own answer">
+      <button class="btn ghost ask-other-send" type="button">Send</button>
+    </div>
+    <p class="ask-summary" hidden></p>
+  </div>
+</template>
+
+<template id="tpl-write-confirm-card">
+  <div class="write-confirm-card interactive-card write-card" data-call-id="">
+    <header class="card-head">
+      <span class="card-kicker">Confirm LMS change</span>
+      <span class="card-tag write-action-tag"></span>
+    </header>
+    <div class="write-warning">
+      <span class="write-warning-icon" aria-hidden="true">!</span>
+      <div>
+        <b>Ask-first write — nothing has been sent yet</b>
+        <p class="write-reason"></p>
+      </div>
+    </div>
+    <pre class="write-diff" hidden></pre>
+    <div class="write-actions">
+      <button class="btn confirm-write" type="button">Confirm &amp; Send</button>
+      <button class="btn ghost cancel-write" type="button">Cancel</button>
+      <span class="write-once-note">Runs once · token expires</span>
+    </div>
+    <p class="write-result" hidden></p>
+  </div>
+</template>
+
+<template id="tpl-visual-card">
+  <figure class="visual-card interactive-card" data-call-id="">
+    <div class="visual-stage" data-kind="">
+      <div class="visual-canvas"></div>
+    </div>
+    <div class="visual-toolbar">
+      <div class="visual-zoom">
+        <button class="zoom-out" type="button" aria-label="Zoom out">−</button>
+        <span class="zoom-level">100%</span>
+        <button class="zoom-in" type="button" aria-label="Zoom in">+</button>
+        <button class="zoom-reset" type="button" aria-label="Reset zoom" title="Reset zoom">↺</button>
+      </div>
+      <div class="visual-actions">
+        <button class="btn ghost open-in-viewer" type="button">Open in Viewer</button>
+        <button class="btn ghost download-svg" type="button">Download SVG</button>
+        <button class="btn ghost download-png" type="button">Download PNG</button>
+      </div>
+    </div>
+    <figcaption class="visual-caption">
+      <span class="visual-status pending">Rendering</span>
+      <span class="visual-slug"></span>
+    </figcaption>
+  </figure>
+</template>
+
+<script type="module" src="/assets/app.js"></script>
+</body>
+</html>
