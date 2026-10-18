@@ -20,7 +20,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-import fitz  # type: ignore  # PyMuPDF
+import pymupdf as fitz  # type: ignore  # PyMuPDF
 from docx import Document  # type: ignore
 from openpyxl import load_workbook  # type: ignore
 from pptx import Presentation  # type: ignore

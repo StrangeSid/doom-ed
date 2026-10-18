@@ -6,7 +6,7 @@ import io
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import fitz  # type: ignore
+import pymupdf as fitz  # type: ignore
 import pytest
 from docx import Document  # type: ignore
 from openpyxl import Workbook  # type: ignore

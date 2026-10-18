@@ -33,7 +33,7 @@ except ImportError:
 from app import cache
 from app.db import Database
 from app.security import WriteConfirmationManager, assert_not_live_test
-from app.sessions import Session, SessionStore
+from app.sessions import Session, SessionStore, _extract_jwt_uid
 
 
 class LMSNotAuthenticatedError(Exception):
@@ -96,40 +96,72 @@ def login_indus(store: SessionStore, email: str, password: str) -> Session:
     except Exception as e:
         raise LMSUpstreamError(f"Indus LMS login failed: {e}") from e
 
+    if not isinstance(tok_data, dict):
+        tok_data = {}
+
     access = tok_data.get("access") or tok_data.get("token") or ""
     refresh = tok_data.get("refresh") or ""
     if not access:
         raise LMSUpstreamError("Indus LMS login returned no access token.")
 
-    tenant = ""
-    uid = ""
-    name = ""
+    user_dict = tok_data.get("user") if isinstance(tok_data.get("user"), dict) else {}
+
+    uid = str(user_dict.get("id") or tok_data.get("id") or "").strip()
+    tenant = str(user_dict.get("tenant_id") or tok_data.get("tenant_id") or "").strip()
+    if not tenant and isinstance(user_dict.get("roles"), list):
+        for role in user_dict["roles"]:
+            if isinstance(role, dict) and role.get("tenant_id"):
+                tenant = str(role["tenant_id"]).strip()
+                break
+    name = str(user_dict.get("full_name") or user_dict.get("name") or "").strip()
     grade = ""
 
     try:
         me_data = lms.me(access)
-        tenant = str(me_data.get("tenant_id") or me_data.get("tenant") or "")
-        uid = str(me_data.get("id") or me_data.get("user_id") or "")
-        name = str(me_data.get("name") or me_data.get("full_name") or "")
+        if isinstance(me_data, dict):
+            if not tenant:
+                tenant = str(me_data.get("tenant_id") or me_data.get("tenant") or "").strip()
+            if not uid:
+                uid = str(me_data.get("id") or me_data.get("user_id") or "").strip()
+            if not name:
+                name = str(me_data.get("name") or me_data.get("full_name") or "").strip()
     except Exception:
         pass
 
     try:
         prof_data = lms.profile(access)
+        if not isinstance(prof_data, dict):
+            prof_data = {}
         if not tenant:
-            tenant = str(prof_data.get("tenant_id") or "")
+            tenant_obj = prof_data.get("tenant")
+            if isinstance(tenant_obj, dict):
+                tenant = str(tenant_obj.get("tenant_id") or tenant_obj.get("id") or "").strip()
+            else:
+                tenant = str(tenant_obj or "").strip()
+        if not tenant:
+            tenant = str(prof_data.get("tenant_id") or "").strip()
+        if not tenant and isinstance(prof_data.get("roles"), list):
+            for role in prof_data["roles"]:
+                if isinstance(role, dict) and role.get("tenant_id"):
+                    tenant = str(role["tenant_id"]).strip()
+                    break
         if not uid:
-            uid = str(prof_data.get("id") or "")
+            uid = str(prof_data.get("id") or prof_data.get("user_id") or "").strip()
         if not name:
-            name = str(prof_data.get("full_name") or prof_data.get("name") or "")
-        grade = str(prof_data.get("grade") or prof_data.get("grade_name") or "")
+            name = str(prof_data.get("full_name") or prof_data.get("name") or "").strip()
+        if not grade:
+            grade = str(prof_data.get("grade") or prof_data.get("grade_name") or "").strip()
     except Exception:
         pass
+
+    if not uid:
+        uid = _extract_jwt_uid(access)
 
     session = Session(
         access=access,
         refresh=refresh,
         tenant=tenant,
+        user=user_dict,
         name=name or email,
         email=email,
         uid=uid,

@@ -57,9 +57,10 @@ class Session:
         user_dict = user if isinstance(user, dict) else {}
         resolved_tenant = (tenant or "").strip()
         if not resolved_tenant:
-            resolved_tenant = str(
-                user_dict.get("tenant") or user_dict.get("tenant_id") or ""
-            ).strip()
+            tenant_raw = user_dict.get("tenant") or user_dict.get("tenant_id")
+            if isinstance(tenant_raw, dict):
+                tenant_raw = tenant_raw.get("tenant_id") or tenant_raw.get("id")
+            resolved_tenant = str(tenant_raw or "").strip()
         if not resolved_tenant and isinstance(user_dict.get("roles"), list):
             for role in user_dict["roles"]:
                 if isinstance(role, dict) and role.get("tenant_id"):
@@ -99,6 +100,7 @@ class Session:
         self.sid: str | None = sid
         self.access: str = access or ""
         self.refresh: str = refresh or ""
+        self.user: dict[str, Any] = user_dict
         self.tenant: str = resolved_tenant
         self.name: str = resolved_name
         self.email: str = resolved_email
@@ -111,7 +113,34 @@ class Session:
     @property
     def owner(self) -> str:
         """Canonical per-student isolation key '{tenant}:{uid}'."""
-        return owner_key(self.tenant, self.uid)
+        tenant = (self.tenant or "").strip()
+        uid = (self.uid or "").strip()
+        user = self.user if isinstance(getattr(self, "user", None), dict) else {}
+
+        if not tenant:
+            tenant_raw = user.get("tenant_id") or user.get("tenant")
+            if isinstance(tenant_raw, dict):
+                tenant_raw = tenant_raw.get("tenant_id") or tenant_raw.get("id")
+            tenant = str(tenant_raw or "").strip()
+            if not tenant and isinstance(user.get("roles"), list):
+                for role in user["roles"]:
+                    if isinstance(role, dict) and role.get("tenant_id"):
+                        tenant = str(role["tenant_id"]).strip()
+                        break
+            if tenant:
+                self.tenant = tenant
+
+        if not uid:
+            uid = str(user.get("id") or user.get("uid") or user.get("user_id") or "").strip()
+            if not uid:
+                uid = _extract_jwt_uid(self.access)
+            if uid:
+                self.uid = uid
+
+        if tenant and uid:
+            return owner_key(tenant, uid)
+        # Never crash session handling on incomplete LMS identity payloads.
+        return f"{tenant or 'indus'}:{uid or 'me'}"
 
 
 class SessionStore:

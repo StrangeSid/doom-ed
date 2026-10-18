@@ -341,9 +341,20 @@ function askAboutPage(viewer, page, text) {
 // ---------------------------------------------------------------------------
 
 let pdfjsPromise = null;
+let pdfAssetBase = null;
 function loadPdfJs() {
   if (!pdfjsPromise) {
     pdfjsPromise = (async () => {
+      // index.html's vendor loader (local → CDN chain) loads PDF.js and sets
+      // window.__PDFJS_WORKER_SRC; prefer that global over local ESM copies.
+      if (window.__vendorReady) await window.__vendorReady;
+      const globalLib = window.pdfjsLib;
+      if (globalLib && typeof globalLib.getDocument === 'function') {
+        const workerSrc = window.__PDFJS_WORKER_SRC;
+        if (workerSrc && globalLib.GlobalWorkerOptions) globalLib.GlobalWorkerOptions.workerSrc = workerSrc;
+        pdfAssetBase = workerSrc ? pdfPackageRoot(workerSrc) : new URL('vendor/pdfjs/', assetsBase);
+        return globalLib;
+      }
       const candidates = ['vendor/pdfjs/build/pdf.min.mjs', 'vendor/pdf.min.mjs'];
       let lastError = null;
       for (const relative of candidates) {
@@ -352,6 +363,7 @@ function loadPdfJs() {
           const lib = await import(/* @vite-ignore */ moduleUrl);
           const workerPath = relative.replace(/pdf(\.min)?\.mjs$/i, (match, min) => `pdf.worker${min || ''}.mjs`);
           lib.GlobalWorkerOptions.workerSrc = new URL(workerPath, assetsBase).href;
+          pdfAssetBase = new URL('vendor/pdfjs/', assetsBase);
           return lib;
         } catch (err) {
           lastError = err;
@@ -366,6 +378,14 @@ function loadPdfJs() {
   return pdfjsPromise;
 }
 
+// https://…/pdfjs-dist@3.11.174/build/pdf.worker.min.js → the package root
+// (…/pdfjs-dist@3.11.174/), where cmaps/ and standard_fonts/ live.
+function pdfPackageRoot(workerSrc) {
+  const url = new URL(workerSrc, assetsBase);
+  url.pathname = url.pathname.replace(/\/build\//, '/').replace(/[^/]+$/, '');
+  return url;
+}
+
 async function openPdf(viewer) {
   const { opts, stage } = viewer;
   toolbarBase(viewer, pgmTools(opts.page, opts.page, 100, 0) + askButtonHtml());
@@ -376,13 +396,14 @@ async function openPdf(viewer) {
     const lib = await loadPdfJs();
     if (viewer.signal.aborted) return;
     const url = opts.src;
+    const assetBase = pdfAssetBase || new URL('vendor/pdfjs/', assetsBase);
     const loadingTask = lib.getDocument({
       url,
       isEvalSupported: false,
-      cMapUrl: new URL('vendor/pdfjs/cmaps/', assetsBase).href,
+      cMapUrl: new URL('cmaps/', assetBase).href,
       cMapPacked: true,
-      standardFontDataUrl: new URL('vendor/pdfjs/standard_fonts/', assetsBase).href,
-      wasmUrl: new URL('vendor/pdfjs/wasm/', assetsBase).href,
+      standardFontDataUrl: new URL('standard_fonts/', assetBase).href,
+      wasmUrl: new URL('wasm/', assetBase).href,
     });
     viewer.signal.addEventListener('abort', () => loadingTask.destroy().catch(() => {}), { once: true });
     pdf = await loadingTask.promise;

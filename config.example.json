@@ -1,0 +1,9 @@
+{
+  "llm": {
+    "base_url": "https://openrouter.ai/api/v1",
+    "api_key": "",
+    "teacher_model": "google/gemini-2.5-pro",
+    "maker_model": "google/gemini-2.5-flash",
+    "researcher_model": "google/gemini-2.5-flash"
+  }
+}

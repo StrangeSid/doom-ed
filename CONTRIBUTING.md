@@ -11,7 +11,7 @@ By contributing to this repository, you agree that your contributions will be li
 1. **Zero Synthetic / Demo Data**: Never introduce mock LMS data or fake course fixtures into production code paths. Either live data is available or the appropriate authentication/upstream error is raised.
 2. **Academic Integrity Protection**: Never bypass or weaken `assert_not_live_test`. The study coach must never answer or submit live/unsubmitted tests.
 3. **Encryption at Rest & Isolation**: All student tokens, L2 caches, private blobs, and page texts must remain encrypted at rest with Fernet and strictly isolated by `owner = f"{tenant}:{uid}"`.
-4. **No Build Step on Web Client**: Keep `web/` pure vanilla HTML/CSS/ES modules. Do not add Webpack, Vite, or bundle steps for the client.
+4. **No Build Step on Web Client**: Keep `web/` pure vanilla HTML/CSS/ES modules. Don't add Webpack, Vite, or bundle steps for the client.
 
 ---
 

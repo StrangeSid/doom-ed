@@ -63,7 +63,7 @@ flowchart TB
 1. **Owner Scoping (`tenant:uid`)**:
    - Students at the same school share an Indus LMS `tenant`, but have distinct `uid`.
    - Every session, cache key, FTS5 metadata row, chat thread, and file ACL entry is strictly scoped by `owner = f"{tenant}:{uid}"`.
-   - Student A cannot view or search Student B's courses, files, grades, or chat threads even within the same tenant.
+   - Student A can't view or search Student B's courses, files, grades, or chat threads even within the same tenant.
 2. **Mandatory File ACL Gate (`file_access` Table)**:
    - File downloads via `/api/files/{sha256}` and document reading tools (`read_document`, `search_within_document`, `inspect_document_pages`) execute:
      ```sql
@@ -76,7 +76,7 @@ flowchart TB
 4. **SSRF Hardening (`safe_fetch`)**:
    - Outbound file fetches enforce HTTPS on port 443, reject URL userinfo, resolve DNS via `socket.getaddrinfo`, and block loopback, private, link-local, multicast, and cloud metadata IPs (`169.254.169.254`, `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `::1`, `fc00::/7`) on initial requests and every redirect hop.
 5. **Academic Integrity Protection**:
-   - Unsubmitted or in-progress EOL tests and assessments cannot be explained or answered by the model. The server inspects submission status and raises `PermissionError` (mapping to HTTP 403), offering syllabus pointers and IB practice bank material instead.
+   - Unsubmitted or in-progress EOL tests and assessments can't be explained or answered by the model. The server inspects submission status and raises `PermissionError` (mapping to HTTP 403), offering syllabus pointers and IB practice bank material instead.
 
 ---
 
@@ -140,7 +140,7 @@ The IB resource catalog (`ib-resource-scraping`) is hosted serverless at `https:
 
 ### C. LLM Integration & Routing
 
-doom-ed connects to any OpenAI-compatible API endpoint:
+Doom-ed connects to any OpenAI-compatible API endpoint:
 - **OpenRouter**: Access to `google/gemini-2.5-pro` (Teacher), `google/gemini-2.5-flash` (Maker/Researcher), or `anthropic/claude-3.5-sonnet`.
 - **Gemini via Google AI Studio**: Direct OpenAI-compatible endpoint at `https://generativelanguage.googleapis.com/v1beta/openai/` using Gemini 2.5 Pro / Flash.
 - **Local / Self-hosted proxy**: `yetanotherproxy` or LiteLLM.

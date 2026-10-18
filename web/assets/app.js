@@ -23,6 +23,12 @@ let isStreaming = false;
 // --- DOM References ----------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 
+const appShell = document.querySelector(".app-shell");
+const leftPane = $("left-pane");
+const leftToggle = $("left-toggle");
+const themeToggle = $("theme-toggle");
+const scrim = $("scrim");
+
 const profileCard = $("profile-card");
 const profileAvatar = $("profile-avatar");
 const profileName = $("profile-name");
@@ -83,14 +89,90 @@ const loginModal = $("login-modal");
 const loginForm = $("login-form");
 const loginError = $("login-error");
 const loginCancel = $("login-cancel");
+const loginClose = $("login-close");
 
 const settingsModal = $("settings-modal");
 const settingsBtn = $("settings-btn");
 const settingsForm = $("settings-form");
 const settingsStatus = $("settings-status");
 const settingsCancel = $("settings-cancel");
+const settingsClose = $("settings-close");
 
 const toasts = $("toasts");
+
+// --- Theme -------------------------------------------------------------------
+const THEME_KEY = "doomed.theme";
+
+function currentTheme() {
+  return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+}
+
+/**
+ * Apply a theme to <html>, persist it, and sync the toggle icon/affordance.
+ * The icon shows the theme you are switching TO: sun (switch to light) while
+ * dark mode is active, moon (switch to dark) while light mode is active.
+ */
+function applyTheme(theme, { persist = true } = {}) {
+  const next = theme === "dark" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", next);
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch (e) {
+      /* private mode / storage disabled: theme simply does not persist */
+    }
+  }
+  const dark = next === "dark";
+  const sun = themeToggle.querySelector(".icon-sun");
+  const moon = themeToggle.querySelector(".icon-moon");
+  // SVG elements have no `hidden` IDL property — toggle the attribute itself.
+  if (sun) sun.toggleAttribute("hidden", !dark);
+  if (moon) moon.toggleAttribute("hidden", dark);
+  const label = dark ? "Switch to light theme" : "Switch to dark theme";
+  themeToggle.setAttribute("aria-label", label);
+  themeToggle.title = label;
+  themeToggle.setAttribute("aria-pressed", String(dark));
+}
+
+themeToggle.addEventListener("click", () => {
+  applyTheme(currentTheme() === "dark" ? "light" : "dark");
+});
+
+// --- Sidebar (left triage pane) ----------------------------------------------
+const NARROW = "(max-width: 1080px)";
+
+function isNarrow() {
+  return window.matchMedia(NARROW).matches;
+}
+
+function sidebarOpen() {
+  return isNarrow() ? leftPane.classList.contains("open") : !appShell.classList.contains("left-collapsed");
+}
+
+function setSidebarOpen(open) {
+  const narrow = isNarrow();
+  leftPane.classList.toggle("open", narrow && open);
+  appShell.classList.toggle("left-collapsed", !narrow && !open);
+  scrim.classList.toggle("show", narrow && open);
+  leftToggle.setAttribute("aria-expanded", String(Boolean(open)));
+  const label = open ? "Hide study triage panel" : "Show study triage panel";
+  leftToggle.setAttribute("aria-label", label);
+  leftToggle.title = label;
+}
+
+function syncSidebar() {
+  setSidebarOpen(sidebarOpen());
+}
+
+leftToggle.addEventListener("click", () => setSidebarOpen(!sidebarOpen()));
+scrim.addEventListener("click", () => setSidebarOpen(false));
+window.addEventListener("resize", syncSidebar);
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && isNarrow() && leftPane.classList.contains("open")) {
+    setSidebarOpen(false);
+  }
+});
 
 // --- Toast Helper ------------------------------------------------------------
 function showToast(message, type = "info") {
@@ -152,6 +234,7 @@ loginTrigger.addEventListener("click", () => {
 });
 
 loginCancel.addEventListener("click", () => loginModal.close());
+loginClose.addEventListener("click", () => loginModal.close());
 
 loginForm.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -373,6 +456,7 @@ function renderThreads(threads) {
 
 async function switchThread(threadId) {
   if (isStreaming) return;
+  if (isNarrow()) setSidebarOpen(false);
   currentThreadId = threadId;
   messageList.innerHTML = "";
   emptyState.hidden = true;
@@ -421,9 +505,27 @@ async function createNewThread(title = "New Lesson", topic = "General") {
   }
 }
 
-newLessonBtn.addEventListener("click", () => createNewThread());
+newLessonBtn.addEventListener("click", () => {
+  if (isNarrow()) setSidebarOpen(false);
+  createNewThread();
+});
+
+// Empty-state suggestion chips: seed the composer and send.
+document.querySelectorAll(".suggestion[data-prompt]").forEach((btn) => {
+  btn.addEventListener("click", () => startNewLessonWithPrompt(btn.dataset.prompt));
+});
 
 // --- Messages & Chat Streaming -----------------------------------------------
+// Clean document glyph shared by file chips and the composer citation badge.
+const DOC_ICON_SVG =
+  '<svg class="chip-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M14 3H7.6A2.6 2.6 0 0 0 5 5.6v12.8A2.6 2.6 0 0 0 7.6 21h8.8a2.6 2.6 0 0 0 2.6-2.6V8z"/>' +
+  '<path d="M14 3v5h5"/></svg>';
+
+function escapeText(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
 function renderAttachedFiles(attachments) {
   attachedTray.innerHTML = "";
   if (!attachments || !attachments.length) return;
@@ -431,7 +533,8 @@ function renderAttachedFiles(attachments) {
     const chip = document.createElement("button");
     chip.className = "file-chip";
     chip.type = "button";
-    chip.innerHTML = `<span class="chip-icon">📄</span><span class="chip-name">${att.filename}</span>`;
+    chip.title = att.filename;
+    chip.innerHTML = `<span class="chip-icon">${DOC_ICON_SVG}</span><span class="chip-name">${escapeText(att.filename)}</span>`;
     chip.addEventListener("click", () => {
       openViewer({
         sha256: att.sha256,
@@ -469,7 +572,7 @@ function renderMessages(messages) {
 function appendUserMessageBubble(text) {
   const div = document.createElement("div");
   div.className = "msg-row msg-user";
-  div.innerHTML = `<div class="msg-bubble user-bubble">${renderMarkdown(text)}</div>`;
+  div.innerHTML = `<div class="msg-bubble user-bubble prose">${renderMarkdown(text)}</div>`;
   messageList.appendChild(div);
   messageList.scrollTop = messageList.scrollHeight;
 }
@@ -477,7 +580,7 @@ function appendUserMessageBubble(text) {
 function appendAssistantMessageBubble(text = "") {
   const div = document.createElement("div");
   div.className = "msg-row msg-assistant";
-  div.innerHTML = `<div class="msg-bubble assistant-bubble">${renderMarkdown(text)}</div>`;
+  div.innerHTML = `<div class="msg-bubble assistant-bubble prose">${renderMarkdown(text)}</div>`;
   messageList.appendChild(div);
   messageList.scrollTop = messageList.scrollHeight;
   return div.querySelector(".assistant-bubble");
@@ -490,6 +593,11 @@ async function sendMessage() {
 
   if (!currentThreadId) {
     await createNewThread(text.slice(0, 40) || "Lesson");
+    if (!currentThreadId) {
+      // Thread creation failed (offline / server error): never post a null thread_id.
+      showToast("Could not start a lesson. Check your connection and try again.", "error");
+      return;
+    }
   }
 
   emptyState.hidden = true;
@@ -742,15 +850,21 @@ async function handleVizRenderRequest(data) {
 
 // --- Citations & File Attachments --------------------------------------------
 function setCitation(ref, filename, page) {
-  activeCitation = { ref, filename, page };
+  const name = filename || "Document";
+  const pageNumber = Number.isFinite(Number(page)) ? Number(page) : 1;
+  activeCitation = { ref, filename: name, page: pageNumber };
   citationBadge.hidden = false;
-  citationLabel.textContent = `${filename} · p. ${page}`;
+  citationBadge.title = `Citing ${name}, page ${pageNumber} — click to remove`;
+  citationBadge.setAttribute("aria-label", `Citing ${name}, page ${pageNumber}. Activate to remove the citation.`);
+  citationLabel.textContent = `${name} · p. ${pageNumber}`;
   promptInput.focus();
 }
 
 function clearCitation() {
   activeCitation = null;
   citationBadge.hidden = true;
+  citationBadge.title = "Page currently open in the file viewer — click to cite it";
+  citationBadge.removeAttribute("aria-label");
   citationLabel.textContent = "";
 }
 
@@ -786,8 +900,11 @@ function renderPendingAttachments() {
   composerAttachments.innerHTML = "";
   for (const att of pendingAttachments) {
     const chip = document.createElement("span");
-    chip.className = "file-chip pending";
-    chip.innerHTML = `<span class="chip-name">${att.filename}</span><button class="chip-rm" type="button">×</button>`;
+    chip.className = "file-chip file-chip-pending pending";
+    chip.title = att.filename;
+    chip.innerHTML = `<span class="chip-icon">${DOC_ICON_SVG}</span><span class="chip-name">${escapeText(
+      att.filename
+    )}</span><button class="chip-rm" type="button" aria-label="Remove attachment">×</button>`;
     chip.querySelector(".chip-rm").addEventListener("click", () => {
       pendingAttachments = pendingAttachments.filter((a) => a !== att);
       renderPendingAttachments();
@@ -876,6 +993,7 @@ settingsBtn.addEventListener("click", async () => {
 });
 
 settingsCancel.addEventListener("click", () => settingsModal.close());
+settingsClose.addEventListener("click", () => settingsModal.close());
 
 settingsForm.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -941,6 +1059,20 @@ messageList.addEventListener("click", (e) => {
 
 // --- Startup Init ------------------------------------------------------------
 window.addEventListener("DOMContentLoaded", async () => {
+  applyTheme(currentTheme(), { persist: false });
+  syncSidebar();
+
+  // index.html loads marked / katex / DOMPurify / mermaid (local vendor first,
+  // CDN fallback). Wait for that promise before the first render so markdown,
+  // math, and diagrams never fall back to plain text.
+  if (window.__vendorReady) {
+    try {
+      await window.__vendorReady;
+    } catch (e) {
+      console.warn("Vendor assets failed to load:", e);
+    }
+  }
+
   await initVizEngine();
   await checkAuth();
 });

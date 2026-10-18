@@ -75,6 +75,11 @@ write_mgr = WriteConfirmationManager()
 orchestrator = Orchestrator(db=db, write_mgr=write_mgr)
 
 
+@app.get("/health")
+def health() -> dict[str, Any]:
+    return {"status": "ok", "app": "doom-ed", "version": "0.1.0"}
+
+
 # Auto-import local indus token on startup if available
 @app.on_event("startup")
 def startup_init() -> None:
@@ -247,8 +252,8 @@ def delete_thread(
 
 
 class ChatSendRequest(BaseModel):
-    thread_id: str
-    message: str
+    thread_id: str | None = None
+    message: str = ""
     attached_refs: list[str] | None = None
 
 
@@ -261,6 +266,15 @@ async def chat_send(
     """Stream multi-turn Socratic responses and tool events via SSE."""
     sess = get_current_session(request, doomed_sid)
 
+    thread_id = (body.thread_id or "").strip()
+    created_thread: dict[str, Any] | None = None
+    if not thread_id:
+        title = " ".join((body.message or "").split()[:8]).strip()
+        if len(title) > 80:
+            title = title[:80].rstrip()
+        created_thread = db.create_thread(owner=sess.owner, title=title or "New Lesson")
+        thread_id = str(created_thread.get("id") or "")
+
     # Fetch fresh student triage for teacher grounding
     triage = None
     try:
@@ -270,9 +284,14 @@ async def chat_send(
 
     async def event_generator() -> AsyncGenerator[dict[str, Any], None]:
         try:
+            if created_thread:
+                yield {
+                    "event": "thread_created",
+                    "data": json.dumps({"thread_id": thread_id, "thread": created_thread}),
+                }
             events = orchestrator.process_user_turn(
                 session=sess,
-                thread_id=body.thread_id,
+                thread_id=thread_id,
                 user_message=body.message,
                 student_triage=triage,
                 attached_refs=body.attached_refs,

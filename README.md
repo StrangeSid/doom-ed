@@ -1,6 +1,6 @@
 # doom-ed
 
-> **AI Study Coach & Socratic Pedagogy System** grounded in live **Indus LMS** student data, the **53k+ IB Resource Catalog**, and verified **Dependency-Graph Teaching**.
+AI study coach grounded in live Indus LMS student data, the 53k+ IB resource index, and Socratic dependency-graph pedagogy.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](COPYING)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](requirements.txt)
@@ -8,97 +8,94 @@
 
 ---
 
-## 🌟 Key Capabilities
+## Core capabilities
 
-1. **Grounded Student Triage (`/api/study`)**
-   - Answers three questions from live Indus LMS data without synthetic/mock fallbacks:
-     - **What needs me now?** Overdue work, items due today/tomorrow, today's calendar events, unread notifications, and live attendance status.
-     - **What am I weak at?** Automatically extracts wrong questions from graded EOL tests (`score < total`), low rubric criteria on graded Formative/Summative Assessments, and teacher task feedback to construct a real-time **Fix List**.
-     - **What should I do before the next break?** Ordered work queue before the next holiday or term break.
-2. **Socratic Pedagogy Engine (`app/prompts.py` & `app/orchestrator.py`)**
-   - Direct port of the teaching philosophy from `StrangeSid/learning-agent` (`amosblomqvist/learn`):
-     - **Principle i — Unconditional truths first**: Builds from caveat-free universal statements and real definitions before introducing nuance.
+1. **Student triage (`/api/study`)**
+   - Answers three questions from live LMS data with zero synthetic mocks:
+     - **What needs me now?** Overdue tasks, work due today/tomorrow, today's timetable events, unread notifications, and live attendance.
+     - **What am I weak at?** Extracts wrong questions from graded EOL tests (`score < total`), low rubric criteria on graded assessments, and teacher comments into an actionable fix list.
+     - **What should I do before the next break?** Ordered queue of upcoming work before the next school break.
+2. **Teaching engine (`app/prompts.py`, `app/orchestrator.py`)**
+   - Port of `StrangeSid/learning-agent` (`amosblomqvist/learn`) pedagogy:
+     - **Principle i — Unconditional truths first**: Anchor understanding in caveat-free universal statements and core definitions before adding edge cases.
      - **Principle ii — "How could I have discovered this?"**: Motivate $\to$ Establish $\to$ Connect.
-     - **3-Phase Loop**: Phase 1 Probe (calibrated check binary search) $\to$ Phase 2 Plan (dependency graph approval) $\to$ Phase 3 Teach Loop (node-by-node Motivate/Establish/Connect/Check).
-3. **Interactive Turn-Gated Cards (`cards.js`)**
-   - **`<QuizCard>`**: Multiple choice with options shuffled and index `0: "I don't know"` pinned at bottom. Correct answers are held server-side until the student submits; instant feedback banner (`✓ Correct`, `✗ Incorrect`, `— I don't know` + explanation) gates the next teaching move.
-   - **`<AskCard>`**: Single/multi-select options + auto-appended `"Other (type your own)"` free-text input for goal setting and plan approval.
-   - **`<WriteConfirmCard>`**: Enforces ask-first confirmation before any Indus LMS write action (`mark_read`, `send_message`, `request_extension`, `submit_task`).
-   - **`<VisualCard>`**: Embeds verified Mermaid or SVG diagrams with zoom controls and 1-click export.
-4. **Autonomous File Selection & Multimodal Document Reader (`app/file_reader.py`)**
-   - Agent can search (`search_lms_files`), browse (`browse_lms_folder`), and attach files (`select_and_attach_files`) autonomously.
-   - Reads PDFs, DOCX (with GitHub-flavored Markdown tables), PPTX (slides + speaker notes), and XLSX (worksheets).
-   - Rasterizes PDF pages into PNG images on-demand (`inspect_document_pages`) so vision models can inspect circuit diagrams, geometry figures, graphs, and markscheme tables.
-5. **IB Resource Catalog Integration (`app/ib_client.py`)**
-   - Direct integration with `https://ib-scrape.sidevv.xyz` (53,000+ IB resources).
-   - Automatically pairs past papers (`rtype=paper`) with their official markschemes (`rtype=markscheme`) by matching subject, level, year, session, paper number, and timezone.
-6. **In-App Slide-Over Viewer (`viewer.js`)**
-   - Reads PDFs, DOCX, XLSX, PPTX, images, and Markdown in an in-app drawer without kicking the student out to a raw browser tab.
-   - Bidirectional Chat $\leftrightarrow$ Viewer integration: clicking any citation link in chat jumps the viewer to that exact page (`#page=N`); clicking **"Ask about Page N"** in the viewer attaches that page into the chat composer.
-7. **Live Obsidian Lesson Log (`log-export.js`)**
-   - Real-time lesson log formatted with Obsidian callouts (`> [!question]`, `> [!success]`, `> [!failure]`), inline LaTeX (`$...$`), and diagram embeds (`![[slug.png|550]]`).
-   - One-click **Copy Obsidian Markdown** and **Download `.md`** file.
-8. **Security & Academic Integrity**
-   - **Zero Live Test Leaks**: Server inspects test status before answering or explaining. Any unsubmitted or in-progress EOL test/assessment is rejected with `403 Forbidden` and redirected to syllabus pointers + IB practice bank equivalents.
-   - **Encryption at Rest**: Session tokens, L2 cache, private LMS blobs, and extracted page text are encrypted at rest with **Fernet** (`cryptography`).
-   - **Per-Owner ACL Enforcement**: Every file request and agent tool call is gated by `(tenant, uid)`.
+     - **3-Phase loop**: Phase 1 Probe (calibrated check binary search) $\to$ Phase 2 Plan (dependency map review) $\to$ Phase 3 Teach loop (node-by-node Motivate/Establish/Connect/Check).
+3. **Turn-gated prompt cards (`web/assets/cards.js`)**
+   - **`<QuizCard>`**: Shuffled choices with index `0: "I don't know"` pinned at the bottom. Correct answers stay server-side until submission. Instant feedback (`✓ Correct`, `✗ Incorrect`, `— I don't know` + explanation) gates the next teaching move.
+   - **`<AskCard>`**: Single/multi-choice with an inline "Other (type your own)" text field for goal setting and plan approval.
+   - **`<WriteConfirmCard>`**: Enforces explicit student confirmation before executing any school LMS write (`mark_read`, `send_message`, `request_extension`, `submit_task`).
+   - **`<VisualCard>`**: Embeds verified Mermaid or SVG diagrams with zoom controls and SVG/PNG export.
+4. **Autonomous file access and document reading (`app/file_reader.py`)**
+   - The assistant searches, browses, and attaches course files and IB past papers on its own.
+   - Reads PDFs, DOCX (with table parsing), PPTX (slides + speaker notes), and XLSX spreadsheets.
+   - Rasterizes PDF pages to PNG on demand (`inspect_document_pages`) so vision models can read circuit diagrams, geometry figures, graphs, and markscheme tables.
+5. **IB resource catalog integration (`app/ib_client.py`)**
+   - Direct integration with `https://ib-scrape.sidevv.xyz` (53,000+ IB papers, markschemes, questionbanks, and notes).
+   - Automatically pairs question papers with matching markschemes by subject, level, session, year, paper number, and timezone.
+6. **In-app slide-over viewer (`web/assets/viewer.js`)**
+   - Opens PDFs, DOCX, XLSX, PPTX, images, and Markdown in a side drawer without kicking out to raw browser tabs.
+   - Clicking citation links jumps to the exact page (`#page=N`). Clicking **"Ask about Page N"** sends the page citation directly into the chat composer.
+7. **Obsidian lesson log (`web/assets/log-export.js`)**
+   - Real-time lesson log formatted with Obsidian callouts (`> [!question]`, `> [!success]`, `> [!failure]`), inline math (`$...$`), and diagram embeds (`![[slug.png|550]]`).
+   - One-click clipboard copy and markdown download.
+8. **Security and academic integrity**
+   - **No live test leaks**: The server checks test status before answering. Unsubmitted or in-progress tests return `403 Forbidden` and route to syllabus pointers and practice papers instead.
+   - **Encryption at rest**: Session tokens, L2 cache, private school blobs, and extracted text are encrypted with Fernet.
+   - **Tenant isolation**: Every file request and agent tool call is gated by student ownership `(tenant, uid)`.
 
 ---
 
-## 🚀 Quick Start
+## Quick start
 
-### 1. Requirements & Setup
+### 1. Requirements and setup
 
 ```bash
-# Clone the repository
 git clone https://github.com/StrangeSid/doom-ed.git
 cd doom-ed
 
-# Create virtual environment and install dependencies
 uv venv .venv
 source .venv/bin/activate
 uv pip install -r requirements.txt -r requirements-dev.txt
 
-# Copy environment template
 cp .env.example .env
+cp config.example.json config.json
 ```
 
-### 2. Configure Environment (`.env`)
+### 2. Configure environment and models
 
-```ini
-# Secret key for Fernet encryption (auto-generated if omitted)
-DOOMED_SECRET_KEY=your-32-byte-secret-passphrase
+Edit `config.json` (or `.env`):
 
-# OpenAI-compatible API (OpenRouter, Gemini OpenAI endpoint, yetanotherproxy, OpenAI)
-LLM_BASE_URL=https://openrouter.ai/api/v1
-LLM_API_KEY=your-api-key
-TEACHER_MODEL=google/gemini-2.5-pro
-MAKER_MODEL=google/gemini-2.5-flash
-RESEARCHER_MODEL=google/gemini-2.5-flash
-
-# IB Scrape Public Catalog URL
-IB_SCRAPE_BASE_URL=https://ib-scrape.sidevv.xyz
+```json
+{
+  "llm": {
+    "base_url": "https://openrouter.ai/api/v1",
+    "api_key": "your-key",
+    "teacher_model": "google/gemini-2.5-pro",
+    "maker_model": "google/gemini-2.5-flash",
+    "researcher_model": "google/gemini-2.5-flash"
+  }
+}
 ```
 
-### 3. Run the Development Server
+### 3. Run the development server
 
 ```bash
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Open your browser at **`http://127.0.0.1:8000`**.
-- If `~/.induslms_token.json` exists on your machine, your session is automatically bootstrapped on startup.
-- Otherwise, click **"Sign in with Indus LMS"** and enter your school email and password.
+Open `http://127.0.0.1:8000`.
+- If `~/.induslms_token.json` exists on your system, the session bootstraps automatically on launch.
+- Otherwise, click **"Sign in with Indus LMS"** and enter your school credentials.
 
 ---
 
-## 🧪 Testing
+## Testing
 
 ```bash
-# Run all unit, integration, and security tests
+# Run backend, security, and unit tests
 pytest
 
-# Run Playwright browser end-to-end tests
+# Run Playwright browser tests
 pytest tests/test_e2e_playwright.py
 ```
 

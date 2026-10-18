@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import sqlite3
 import threading
@@ -100,12 +101,84 @@ def load_or_create_secret_key(data_dir: Path | None = None) -> bytes:
 
 SECRET_KEY: bytes = load_or_create_secret_key(DATA_DIR)
 
-# OpenAI-compatible LLM configuration
-LLM_BASE_URL: str = os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
-LLM_API_KEY: str = os.environ.get("LLM_API_KEY", "")
-TEACHER_MODEL: str = os.environ.get("TEACHER_MODEL", "google/gemini-2.5-pro")
-MAKER_MODEL: str = os.environ.get("MAKER_MODEL", "google/gemini-2.5-flash")
-RESEARCHER_MODEL: str = os.environ.get("RESEARCHER_MODEL", "google/gemini-2.5-flash")
+# --- config.json (LLM backend) ----------------------------------------------
+# Project root config file: LLM base_url/api_key/models live here so the backend
+# endpoint can be changed without touching code. Override the path with
+# DOOMED_CONFIG_FILE if needed.
+ROOT_DIR: Path = Path(__file__).resolve().parent.parent
+CONFIG_FILE: Path = Path(
+    os.environ.get("DOOMED_CONFIG_FILE") or (ROOT_DIR / "config.json")
+).expanduser()
+
+_DEFAULT_LLM_CONFIG: dict[str, str] = {
+    "base_url": os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
+    "api_key": os.environ.get("LLM_API_KEY", ""),
+    "teacher_model": os.environ.get("TEACHER_MODEL", "google/gemini-2.5-pro"),
+    "maker_model": os.environ.get("MAKER_MODEL", "google/gemini-2.5-flash"),
+    "researcher_model": os.environ.get("RESEARCHER_MODEL", "google/gemini-2.5-flash"),
+}
+_LLM_FILE_KEYS: dict[str, str] = {
+    "LLM_BASE_URL": "base_url",
+    "LLM_API_KEY": "api_key",
+    "TEACHER_MODEL": "teacher_model",
+    "MAKER_MODEL": "maker_model",
+    "RESEARCHER_MODEL": "researcher_model",
+}
+
+
+def load_config_file(path: str | Path | None = None) -> dict[str, Any]:
+    """Load config.json contents (or {} when missing/unreadable/invalid)."""
+    target = Path(path).expanduser() if path is not None else CONFIG_FILE
+    if not target.exists() or not target.is_file():
+        return {}
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_config_file(data: dict[str, Any], path: str | Path | None = None) -> None:
+    """Merge `data` into config.json atomically (0600 permissions; may hold API keys)."""
+    target = Path(path).expanduser() if path is not None else CONFIG_FILE
+    merged = dict(load_config_file(target))
+    merged.update(data)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = target.with_name(f"{target.name}.tmp")
+        tmp_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp_path, target)
+        try:
+            os.chmod(target, 0o600)
+        except OSError:
+            pass
+    except OSError:
+        pass
+
+
+def _load_llm_settings() -> dict[str, str]:
+    """Effective LLM defaults: config.json layered over environment defaults.
+    Creates config.json from the environment/defaults when it does not exist."""
+    if not CONFIG_FILE.exists():
+        save_config_file({"llm": dict(_DEFAULT_LLM_CONFIG)})
+    file_cfg = load_config_file()
+    file_llm = file_cfg.get("llm") if isinstance(file_cfg.get("llm"), dict) else {}
+    settings = dict(_DEFAULT_LLM_CONFIG)
+    for key in _DEFAULT_LLM_CONFIG:
+        val = file_llm.get(key)
+        if isinstance(val, str) and val.strip():
+            settings[key] = val.strip()
+    return settings
+
+
+_LLM_SETTINGS: dict[str, str] = _load_llm_settings()
+
+# OpenAI-compatible LLM configuration (config.json wins over environment defaults)
+LLM_BASE_URL: str = _LLM_SETTINGS["base_url"].rstrip("/")
+LLM_API_KEY: str = _LLM_SETTINGS["api_key"]
+TEACHER_MODEL: str = _LLM_SETTINGS["teacher_model"]
+MAKER_MODEL: str = _LLM_SETTINGS["maker_model"]
+RESEARCHER_MODEL: str = _LLM_SETTINGS["researcher_model"]
 
 # Indus LMS optional local CLI token path
 INDUSLMS_TOKEN_FILE: Path = Path(
@@ -245,7 +318,15 @@ def update_llm_config(
             researcher_model if researcher_model is not None else extra.get("RESEARCHER_MODEL")
         ),
     }
-    for k, v in mapping.items():
-        if v is not None:
-            set_setting(k, str(v).strip(), persist=persist)
+    file_updates: dict[str, str] = {}
+    for env_key, v in mapping.items():
+        if v is None:
+            continue
+        clean = str(v).strip()
+        set_setting(env_key, clean, persist=persist)
+        file_updates[_LLM_FILE_KEYS[env_key]] = clean
+    if persist and file_updates:
+        merged_llm: dict[str, str] = dict(get_llm_config())
+        merged_llm.update(file_updates)
+        save_config_file({"llm": merged_llm})
     return get_llm_config()
