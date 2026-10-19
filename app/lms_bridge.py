@@ -171,6 +171,21 @@ def login_indus(store: SessionStore, email: str, password: str) -> Session:
     return session
 
 
+def _is_unauthorized_response(res: Any) -> bool:
+    if isinstance(res, dict):
+        if res.get("code") in ("UNAUTHORIZED", "token_not_valid", "not_authenticated"):
+            return True
+        if res.get("status") == "error":
+            msg = str(res.get("message", "")).lower()
+            details = str(res.get("details", "")).lower()
+            if "unauthorized" in msg or "token" in details or "not valid" in details:
+                return True
+        details = res.get("details")
+        if isinstance(details, dict) and details.get("code") == "token_not_valid":
+            return True
+    return False
+
+
 def call_lms(
     session: Session,
     store: SessionStore | None,
@@ -185,8 +200,16 @@ def call_lms(
     if not session or not session.access:
         raise LMSNotAuthenticatedError("Student not authenticated with Indus LMS.")
 
+    def _invoke(tok: str) -> Any:
+        out = fn(tok, *args, **kwargs)
+        if _is_unauthorized_response(out):
+            class _Fake401(Exception):
+                status = 401
+            raise _Fake401("Unauthorized LMS API response")
+        return out
+
     try:
-        return fn(session.access, *args, **kwargs)
+        return _invoke(session.access)
     except Exception as e:
         status = getattr(e, "status", None) or getattr(getattr(e, "response", None), "status_code", None)
         if status == 401:
@@ -195,6 +218,8 @@ def call_lms(
             if session.refresh:
                 try:
                     ref_data = lms.refresh_token(session.refresh)
+                    if _is_unauthorized_response(ref_data):
+                        raise LMSNotAuthenticatedError("Indus LMS refresh token is expired or invalid.")
                     new_access = ref_data.get("access") or ref_data.get("token")
                     if new_access:
                         session.access = new_access
@@ -202,11 +227,78 @@ def call_lms(
                             session.refresh = ref_data["refresh"]
                         if store:
                             store.save(session)
-                        return fn(session.access, *args, **kwargs)
+                        return _invoke(session.access)
+                except LMSNotAuthenticatedError:
+                    raise
                 except Exception as ref_err:
                     raise LMSNotAuthenticatedError("Indus LMS session expired and refresh failed.") from ref_err
             raise LMSNotAuthenticatedError("Indus LMS session expired.") from e
         raise LMSUpstreamError(f"Indus LMS API error: {e}") from e
+
+
+def shape_eol(e: dict[str, Any]) -> dict[str, Any]:
+    """Shape raw Indus LMS EOL test row into uniform assignment shape."""
+    due = e.get("available_until") or e.get("due_date") or e.get("due")
+    submitted = bool(e.get("submitted_at")) or str(e.get("status") or "").lower() in ("submitted", "completed", "graded")
+    score = e.get("score")
+    total = e.get("total_marks") if e.get("total_marks") is not None else e.get("total")
+    return {
+        "id": str(e.get("id") or e.get("test_id") or ""),
+        "title": e.get("title") or "End of Lesson Test",
+        "subject": e.get("subject") or e.get("subject_name") or "General",
+        "topic": e.get("topic") or e.get("title") or "",
+        "due": due,
+        "submitted": submitted,
+        "status": e.get("status") or ("completed" if submitted else "pending"),
+        "score": score,
+        "total": total,
+        "type": "eol",
+        "teacher": e.get("teacher_name") or "",
+    }
+
+
+def shape_assessment(a: dict[str, Any]) -> dict[str, Any]:
+    """Shape raw Indus LMS assessment row into uniform assignment shape."""
+    x = a.get("assessment") or (a if "title" in a else {})
+    due = x.get("due_date") or a.get("due_date") or a.get("due")
+    submitted = bool(a.get("submitted_at")) or str(a.get("status") or "").lower() in ("submitted", "graded", "completed")
+    score = a.get("marks") if a.get("marks") is not None else a.get("score")
+    total = a.get("total_marks") if a.get("total_marks") is not None else (a.get("total") or x.get("total_marks"))
+    return {
+        "id": str(x.get("id") or a.get("assignment_id") or a.get("id") or ""),
+        "assignment_id": str(a.get("assignment_id") or ""),
+        "title": x.get("title") or a.get("title") or "Assessment",
+        "subject": x.get("subject") or a.get("subject") or "General",
+        "due": due,
+        "submitted": submitted,
+        "status": a.get("status") or ("graded" if submitted else "pending"),
+        "score": score,
+        "total": total,
+        "type": "assessment",
+        "category": x.get("category") or "",
+        "teacher": x.get("teacher_name") or "",
+    }
+
+
+def shape_task(t: dict[str, Any]) -> dict[str, Any]:
+    """Shape raw Indus LMS learning task row into uniform assignment shape."""
+    due = t.get("due_date") or t.get("due")
+    submitted = bool(t.get("submitted_at")) or str(t.get("status") or "").lower() in ("submitted", "graded", "completed")
+    score = t.get("score")
+    total = t.get("total_marks") or t.get("total") or 100
+    return {
+        "id": str(t.get("id") or ""),
+        "title": t.get("title") or "Learning Task",
+        "subject": t.get("subject") or t.get("course_title") or "General",
+        "due": due,
+        "submitted": submitted,
+        "status": t.get("status") or ("submitted" if submitted else "pending"),
+        "score": score,
+        "total": total,
+        "type": "task",
+        "teacher": t.get("teacher") or "",
+        "attachments": t.get("attachments") or [],
+    }
 
 
 def fetch_student_payload(
@@ -215,7 +307,7 @@ def fetch_student_payload(
     refresh: bool = False,
 ) -> dict[str, Any]:
     """Fetch live student data (courses, eol tests, assessments, tasks, calendar,
-    attendance, notifications, announcements) with per-student caching."""
+    notifications, announcements, and full student profile) with per-student caching."""
     _ensure_lms_module()
     if not session or not session.access:
         raise LMSNotAuthenticatedError("Student not authenticated with Indus LMS.")
@@ -228,43 +320,77 @@ def fetch_student_payload(
                 "uid": session.uid,
                 "tenant": session.tenant,
                 "grade": session.grade,
+                "school": "",
+                "program": "",
+                "admission_no": "",
+                "student_id_number": "",
+                "subjects": [],
+                "organisation_name": "",
             },
             "courses": [],
             "eol": [],
             "assessments": [],
             "tasks": [],
             "calendar": [],
-            "attendance": {},
             "notifications": [],
             "announcements": [],
             "fetched_at": time.time(),
         }
 
+        def _fetch_profile():
+            try:
+                prof = call_lms(session, store, lms.profile)
+                if isinstance(prof, dict):
+                    results["student"]["school"] = prof.get("school") or ""
+                    results["student"]["program"] = prof.get("program") or ""
+                    results["student"]["grade"] = prof.get("grade") or results["student"]["grade"]
+                    results["student"]["admission_no"] = prof.get("admission_no") or ""
+                    results["student"]["student_id_number"] = prof.get("student_id_number") or ""
+                    results["student"]["subjects"] = prof.get("subjects") or []
+                    tenant_info = prof.get("tenant")
+                    if isinstance(tenant_info, dict):
+                        results["student"]["organisation_name"] = tenant_info.get("organisation_name") or ""
+            except LMSNotAuthenticatedError:
+                raise
+            except Exception:
+                pass
+
         def _fetch_courses():
             try:
                 res = call_lms(session, store, lms.my_courses, session.tenant)
                 results["courses"] = res.get("courses") if isinstance(res, dict) else (res or [])
-            except Exception as e:
+            except LMSNotAuthenticatedError:
+                raise
+            except Exception:
                 results["courses"] = []
 
         def _fetch_eol():
             try:
                 res = call_lms(session, store, lms.eol_tests, session.tenant)
-                results["eol"] = res.get("results") if isinstance(res, dict) else (res or [])
+                raw_list = res.get("results") if isinstance(res, dict) else (res or [])
+                results["eol"] = [shape_eol(e) for e in raw_list]
+            except LMSNotAuthenticatedError:
+                raise
             except Exception:
                 results["eol"] = []
 
         def _fetch_assessments():
             try:
                 res = call_lms(session, store, lms.assessments)
-                results["assessments"] = res.get("results") if isinstance(res, dict) else (res or [])
+                raw_list = res.get("results") if isinstance(res, dict) else (res or [])
+                results["assessments"] = [shape_assessment(a) for a in raw_list]
+            except LMSNotAuthenticatedError:
+                raise
             except Exception:
                 results["assessments"] = []
 
         def _fetch_tasks():
             try:
                 res = call_lms(session, store, lms.learning_tasks, session.tenant)
-                results["tasks"] = res if isinstance(res, list) else []
+                raw_list = res if isinstance(res, list) else []
+                results["tasks"] = [shape_task(t) for t in raw_list]
+            except LMSNotAuthenticatedError:
+                raise
             except Exception:
                 results["tasks"] = []
 
@@ -274,13 +400,6 @@ def fetch_student_payload(
                 results["calendar"] = res.get("events") if isinstance(res, dict) else (res or [])
             except Exception:
                 results["calendar"] = []
-
-        def _fetch_attendance():
-            try:
-                res = call_lms(session, store, lms.attendance_day, session.tenant)
-                results["attendance"] = res if isinstance(res, dict) else {}
-            except Exception:
-                results["attendance"] = {}
 
         def _fetch_notifications():
             try:
@@ -298,12 +417,12 @@ def fetch_student_payload(
 
         with ThreadPoolExecutor(max_workers=8) as ex:
             futures = [
+                ex.submit(_fetch_profile),
                 ex.submit(_fetch_courses),
                 ex.submit(_fetch_eol),
                 ex.submit(_fetch_assessments),
                 ex.submit(_fetch_tasks),
                 ex.submit(_fetch_calendar),
-                ex.submit(_fetch_attendance),
                 ex.submit(_fetch_notifications),
                 ex.submit(_fetch_announcements),
             ]
@@ -575,7 +694,6 @@ def build_study_triage(
             "due_soon": [],
             "calendar_today": [],
             "unread_notifications": [],
-            "attendance": payload.get("attendance") or {},
         }
 
         eol_items = payload.get("eol") or []
@@ -585,12 +703,11 @@ def build_study_triage(
         notifs = payload.get("notifications") or []
 
         # 1. NOW: Overdue & Due Soon
-        for item in eol_items + assessments + tasks:
-            status = str(item.get("status") or "").lower()
-            submitted = item.get("submitted", False) or "submitted" in status or "completed" in status or "graded" in status
-            if submitted:
+        all_work = eol_items + assessments + tasks
+        for item in all_work:
+            if item.get("submitted"):
                 continue
-            due_str = item.get("due_date") or item.get("due") or item.get("end_date")
+            due_str = item.get("due")
             ts = _parse_due_timestamp(due_str)
             if ts < now_ts:
                 now_section["overdue"].append(item)
@@ -612,11 +729,10 @@ def build_study_triage(
 
         # A. Graded EOL tests (score < total)
         for e in eol_items:
-            status = str(e.get("status") or "").lower()
             score = e.get("score")
-            total = e.get("total") or e.get("max_marks") or e.get("total_marks")
+            total = e.get("total")
             eid = str(e.get("id") or "")
-            if score is not None and total is not None and score < total and eid:
+            if e.get("submitted") and score is not None and total is not None and score < total and eid:
                 wrong_qs: list[dict[str, Any]] = []
                 try:
                     res = call_lms(session, store, lms.eol_result, session.tenant, eid, session.uid)
@@ -635,7 +751,7 @@ def build_study_triage(
 
                 weak_topics.append({
                     "id": f"eol:{eid}",
-                    "subject": e.get("subject") or e.get("subject_name") or "General",
+                    "subject": e.get("subject") or "General",
                     "topic": e.get("topic") or e.get("title") or "EOL Test",
                     "source_type": "eol",
                     "source_id": eid,
@@ -649,11 +765,10 @@ def build_study_triage(
 
         # B. Graded FA/SA assessments with feedback or lower criterion
         for a in assessments:
-            aid = str(a.get("id") or "")
-            status = str(a.get("status") or "").lower()
-            score = a.get("marks") or a.get("score")
-            total = a.get("total_marks") or a.get("max_marks")
-            if score is not None and total is not None and score < total and aid:
+            aid = str(a.get("assignment_id") or a.get("id") or "")
+            score = a.get("score")
+            total = a.get("total")
+            if a.get("submitted") and score is not None and total is not None and score < total and aid:
                 fb_text = ""
                 try:
                     fb = call_lms(session, store, lms.assessment_feedback, aid)
@@ -685,12 +800,10 @@ def build_study_triage(
                     break
 
         before_break: list[dict[str, Any]] = []
-        for item in eol_items + assessments + tasks:
-            status = str(item.get("status") or "").lower()
-            submitted = item.get("submitted", False) or "submitted" in status or "graded" in status
-            if submitted:
+        for item in all_work:
+            if item.get("submitted"):
                 continue
-            due_str = item.get("due_date") or item.get("due") or item.get("end_date")
+            due_str = item.get("due")
             ts = _parse_due_timestamp(due_str)
             if now_ts <= ts <= break_date_ts:
                 before_break.append({
@@ -699,7 +812,7 @@ def build_study_triage(
                     "subject": item.get("subject") or "General",
                     "due": due_str,
                     "due_ts": ts,
-                    "type": "eol" if item in eol_items else "assessment" if item in assessments else "task",
+                    "type": item.get("type", "assignment"),
                 })
 
         before_break.sort(key=lambda x: x["due_ts"])

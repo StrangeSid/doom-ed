@@ -92,18 +92,15 @@ def startup_init() -> None:
 
 
 def get_current_session(request: Request, doomed_sid: str | None = Cookie(None)) -> Session:
-    """Retrieve authenticated session from HttpOnly cookie or raise 401."""
+    """Retrieve authenticated session from HttpOnly cookie or bootstrap local token."""
     sid = doomed_sid or request.headers.get("x-session-id")
-    if not sid:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required. Please sign in to Indus LMS.",
-        )
-    sess = session_store.get(sid)
+    sess = session_store.get(sid) if sid else None
+    if not sess and os.environ.get("DOOMED_AUTO_BOOTSTRAP_TOKEN", "1") == "1":
+        sess = import_local_indus_token(session_store)
     if not sess:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session expired or invalid. Please sign in again.",
+            detail="Authentication required. Please sign in to Indus LMS.",
         )
     return sess
 
@@ -154,17 +151,38 @@ def logout(response: Response, doomed_sid: str | None = Cookie(None)) -> dict[st
 
 
 @app.get("/api/session")
-def session_info(request: Request, doomed_sid: str | None = Cookie(None)) -> dict[str, Any]:
+def session_info(
+    request: Request,
+    response: Response,
+    doomed_sid: str | None = Cookie(None),
+) -> dict[str, Any]:
     sess = get_current_session(request, doomed_sid)
+    if not doomed_sid and sess:
+        response.set_cookie(
+            key=COOKIE_NAME,
+            value=sess.sid,
+            httponly=True,
+            samesite="lax",
+            max_age=86400 * 30,
+            secure=False,
+        )
+    student_info = {
+        "name": sess.name,
+        "email": sess.email,
+        "uid": sess.uid,
+        "tenant": sess.tenant,
+        "grade": sess.grade,
+    }
+    try:
+        payload = lms_bridge.fetch_student_payload(sess, session_store, refresh=False)
+        if isinstance(payload.get("student"), dict):
+            student_info.update(payload["student"])
+    except Exception:
+        pass
+
     return {
         "status": "ok",
-        "student": {
-            "name": sess.name,
-            "email": sess.email,
-            "uid": sess.uid,
-            "tenant": sess.tenant,
-            "grade": sess.grade,
-        },
+        "student": student_info,
     }
 
 

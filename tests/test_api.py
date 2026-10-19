@@ -41,7 +41,8 @@ def auth_cookie(tmp_path):
     return sess.sid
 
 
-def test_session_unauthenticated(client):
+def test_session_unauthenticated(client, monkeypatch):
+    monkeypatch.setenv("DOOMED_AUTO_BOOTSTRAP_TOKEN", "0")
     res = client.get("/api/session")
     assert res.status_code == 401
 
@@ -64,7 +65,6 @@ def test_study_triage_endpoint(client, auth_cookie, monkeypatch):
     fake_lms.assessments.return_value = {"results": []}
     fake_lms.learning_tasks.return_value = []
     fake_lms.calendar_events.return_value = {"events": []}
-    fake_lms.attendance_day.return_value = {"present": True}
     fake_lms.notifications.return_value = {"notifications": []}
     fake_lms.announcements.return_value = {"announcements": []}
     monkeypatch.setattr(bridge, "lms", fake_lms)

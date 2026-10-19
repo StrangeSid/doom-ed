@@ -56,7 +56,8 @@ def browser_context():
         browser.close()
 
 
-def test_webapp_unauthenticated_flow(live_server, browser_context):
+def test_webapp_unauthenticated_flow(live_server, browser_context, monkeypatch):
+    monkeypatch.setenv("DOOMED_AUTO_BOOTSTRAP_TOKEN", "0")
     context = browser_context.new_context()
     page = context.new_page()
 
@@ -108,7 +109,6 @@ def test_webapp_authenticated_flow(live_server, browser_context, monkeypatch):
     fake_lms.assessments.return_value = {"results": []}
     fake_lms.learning_tasks.return_value = []
     fake_lms.calendar_events.return_value = {"events": []}
-    fake_lms.attendance_day.return_value = {"present": True}
     fake_lms.notifications.return_value = {"notifications": []}
     fake_lms.announcements.return_value = {"announcements": []}
     monkeypatch.setattr(bridge, "lms", fake_lms)
@@ -140,9 +140,10 @@ def test_webapp_authenticated_flow(live_server, browser_context, monkeypatch):
     page.goto(live_server)
     page.wait_for_load_state("networkidle")
 
-    # 1. Profile card rendered
+    # 1. Profile card rendered and attendance pill absent
     page.wait_for_selector("#profile-card:not([hidden])", timeout=5000)
     assert "Antigravity Tester" in page.locator("#profile-name").text_content()
+    assert page.locator("#attendance-pill").count() == 0
 
     # 2. Fix List rendered from weak EOL test
     page.wait_for_selector(".fix-item", timeout=5000)
@@ -154,20 +155,29 @@ def test_webapp_authenticated_flow(live_server, browser_context, monkeypatch):
     page.wait_for_timeout(500)
     assert page.locator("#composer-form").is_visible()
 
-    # 4. Settings modal check
-    page.locator("#settings-btn").click()
-    page.wait_for_selector("#settings-modal[open]", timeout=3000)
-    assert page.locator("#setting-teacher-model").is_visible()
-    page.locator("#settings-cancel").click()
+    # 4. Profile modal check (clicking profile card shows full student profile)
+    page.locator("#profile-card").click()
+    page.wait_for_selector("#profile-modal[open]", timeout=3000)
+    assert "Antigravity Tester" in page.locator("#prof-name").text_content()
+    page.locator("#profile-modal-close").click()
+    page.wait_for_selector("#profile-modal", state="hidden", timeout=3000)
 
-    # 5. Lesson Log drawer toggle
+    # 5. Sidebar collapse & expand toggle
+    page.locator("#sidebar-collapse-btn").click()
+    page.wait_for_timeout(300)
+    assert "left-collapsed" in (page.locator(".app-shell").get_attribute("class") or "")
+    page.locator("#left-toggle").click()
+    page.wait_for_timeout(300)
+    assert "left-collapsed" not in (page.locator(".app-shell").get_attribute("class") or "")
+
+    # 6. Lesson Log drawer toggle
     page.locator("#log-toggle").click()
     page.wait_for_selector("#log-drawer.open", timeout=3000)
     assert page.locator("#copy-log-btn").is_visible()
     page.locator("#log-close").click()
     page.wait_for_selector("#log-drawer:not(.open)", timeout=3000)
 
-    # 6. Theme toggle
+    # 7. Theme toggle
     theme_btn = page.locator("#theme-toggle")
     theme_btn.click()
     current_theme = page.locator("html").get_attribute("data-theme")

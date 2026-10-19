@@ -2,6 +2,7 @@
 """Unit tests for Indus LMS bridge and study triage logic."""
 
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -205,13 +206,14 @@ def test_build_study_triage(mock_session, test_db, session_store, monkeypatch):
             {"question_id": "q1", "question_text": "Vector addition", "is_correct": False, "score": 0}
         ]
     }
+    future_due = datetime.fromtimestamp(now_ts + 86400, timezone.utc).isoformat()
     fake_lms.assessments.return_value = {
         "results": [
             {
                 "id": "fa_due_soon",
                 "title": "Lab Report",
                 "status": "pending",
-                "due_date": "2026-10-18T18:00:00Z",
+                "due_date": future_due,
                 "submitted": False,
             }
         ]
@@ -219,10 +221,9 @@ def test_build_study_triage(mock_session, test_db, session_store, monkeypatch):
     fake_lms.learning_tasks.return_value = []
     fake_lms.calendar_events.return_value = {
         "events": [
-            {"title": "Diwali Break", "date": "2026-10-25T00:00:00Z"}
+            {"title": "Diwali Break", "date": datetime.fromtimestamp(now_ts + 86400 * 5, timezone.utc).isoformat()}
         ]
     }
-    fake_lms.attendance_day.return_value = {"present": True}
     fake_lms.notifications.return_value = {
         "notifications": [{"id": "n1", "title": "Homework posted", "is_read": False}]
     }

@@ -46,8 +46,21 @@ const listOverdue = $("list-overdue");
 const listDueSoon = $("list-due-soon");
 const listCalendarToday = $("list-calendar-today");
 const listUnreadNotifs = $("list-unread-notifs");
-const attendancePill = $("attendance-pill");
 const refreshTriageBtn = $("refresh-triage-btn");
+const sidebarCollapseBtn = $("sidebar-collapse-btn");
+
+const profileModal = $("profile-modal");
+const profileModalClose = $("profile-modal-close");
+const profileDoneBtn = $("profile-done-btn");
+const profAvatar = $("prof-avatar");
+const profName = $("prof-name");
+const profEmail = $("prof-email");
+const profSchool = $("prof-school");
+const profGrade = $("prof-grade");
+const profProgram = $("prof-program");
+const profAdmission = $("prof-admission");
+const profStudentId = $("prof-student-id");
+const profSubjects = $("prof-subjects");
 
 const countFix = $("count-fix");
 const fixList = $("fix-list");
@@ -91,13 +104,6 @@ const loginError = $("login-error");
 const loginCancel = $("login-cancel");
 const loginClose = $("login-close");
 
-const settingsModal = $("settings-modal");
-const settingsBtn = $("settings-btn");
-const settingsForm = $("settings-form");
-const settingsStatus = $("settings-status");
-const settingsCancel = $("settings-cancel");
-const settingsClose = $("settings-close");
-
 const toasts = $("toasts");
 
 // --- Theme -------------------------------------------------------------------
@@ -140,13 +146,21 @@ themeToggle.addEventListener("click", () => {
 
 // --- Sidebar (left triage pane) ----------------------------------------------
 const NARROW = "(max-width: 1080px)";
+const SIDEBAR_COLLAPSED_KEY = "doomed.sidebar_collapsed";
 
 function isNarrow() {
   return window.matchMedia(NARROW).matches;
 }
 
 function sidebarOpen() {
-  return isNarrow() ? leftPane.classList.contains("open") : !appShell.classList.contains("left-collapsed");
+  if (isNarrow()) {
+    return leftPane.classList.contains("open");
+  }
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) !== "true";
+  } catch (e) {
+    return !appShell.classList.contains("left-collapsed");
+  }
 }
 
 function setSidebarOpen(open) {
@@ -158,6 +172,12 @@ function setSidebarOpen(open) {
   const label = open ? "Hide study triage panel" : "Show study triage panel";
   leftToggle.setAttribute("aria-label", label);
   leftToggle.title = label;
+
+  if (!narrow) {
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(!open));
+    } catch (e) {}
+  }
 }
 
 function syncSidebar() {
@@ -165,6 +185,9 @@ function syncSidebar() {
 }
 
 leftToggle.addEventListener("click", () => setSidebarOpen(!sidebarOpen()));
+if (sidebarCollapseBtn) {
+  sidebarCollapseBtn.addEventListener("click", () => setSidebarOpen(false));
+}
 scrim.addEventListener("click", () => setSidebarOpen(false));
 window.addEventListener("resize", syncSidebar);
 
@@ -295,8 +318,6 @@ function clearTriageUI() {
   countCalendar.textContent = "0";
   countUnread.textContent = "0";
   countFix.hidden = true;
-  attendancePill.className = "attendance-pill unknown";
-  attendancePill.textContent = "Not loaded";
 }
 
 function renderTriageNow(now) {
@@ -346,13 +367,6 @@ function renderTriageNow(now) {
         `<li><span class="item-title">${n.title || n.message || "Notice"}</span></li>`
     )
     .join("");
-
-  if (now.attendance) {
-    const att = now.attendance;
-    const isPresent = att.present ?? att.status === "present";
-    attendancePill.className = `attendance-pill ${isPresent ? "present" : "absent"}`;
-    attendancePill.textContent = isPresent ? "Present Today" : "Absent / Pending";
-  }
 }
 
 function renderTriageWeak(weakTopics) {
@@ -975,55 +989,42 @@ downloadLogBtn.addEventListener("click", () => {
   showToast("Downloading lesson log...", "info");
 });
 
-// --- Settings Modal ----------------------------------------------------------
-settingsBtn.addEventListener("click", async () => {
-  try {
-    const res = await fetch("/api/settings");
-    if (res.ok) {
-      const data = await res.json();
-      const cfg = data.config || {};
-      $("setting-base-url").value = cfg.base_url || "";
-      $("setting-teacher-model").value = cfg.teacher_model || "";
-      $("setting-maker-model").value = cfg.maker_model || "";
-      $("setting-researcher-model").value = cfg.researcher_model || "";
+// --- Student Profile Modal ---------------------------------------------------
+function openProfileModal() {
+  if (!currentSession) return;
+  if (profAvatar) profAvatar.textContent = (currentSession.name || "S")[0].toUpperCase();
+  if (profName) profName.textContent = currentSession.name || "Student";
+  if (profEmail) profEmail.textContent = currentSession.email || "";
+  if (profSchool) profSchool.textContent = currentSession.school || currentSession.organisation_name || "Indus International School";
+  if (profGrade) profGrade.textContent = currentSession.grade || "—";
+  if (profProgram) profProgram.textContent = currentSession.program || "Diploma Programme";
+  if (profAdmission) profAdmission.textContent = currentSession.admission_no || "—";
+  if (profStudentId) profStudentId.textContent = currentSession.student_id_number || "—";
+
+  if (profSubjects) {
+    const subjs = currentSession.subjects || [];
+    if (Array.isArray(subjs) && subjs.length) {
+      profSubjects.innerHTML = subjs.map((s) => `<span class="prof-subj-tag">${s}</span>`).join("");
+    } else {
+      profSubjects.innerHTML = `<span class="prof-subj-tag empty">No subjects listed</span>`;
     }
-  } catch (e) {}
-  settingsStatus.hidden = true;
-  settingsModal.showModal();
-});
-
-settingsCancel.addEventListener("click", () => settingsModal.close());
-settingsClose.addEventListener("click", () => settingsModal.close());
-
-settingsForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const body = {
-    base_url: $("setting-base-url").value.trim(),
-    api_key: $("setting-api-key").value.trim() || undefined,
-    teacher_model: $("setting-teacher-model").value.trim(),
-    maker_model: $("setting-maker-model").value.trim(),
-    researcher_model: $("setting-researcher-model").value.trim(),
-  };
-
-  try {
-    const res = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (res.ok) {
-      settingsStatus.textContent = "Settings saved successfully.";
-      settingsStatus.className = "settings-status success";
-      settingsStatus.hidden = false;
-      setTimeout(() => settingsModal.close(), 800);
-      showToast("Model settings updated", "success");
-    }
-  } catch (err) {
-    settingsStatus.textContent = "Failed to save settings.";
-    settingsStatus.className = "settings-status error";
-    settingsStatus.hidden = false;
   }
-});
+  if (profileModal) profileModal.showModal();
+}
+
+if (profileCard) {
+  profileCard.addEventListener("click", (e) => {
+    if (e.target !== signoutBtn && !signoutBtn.contains(e.target)) {
+      openProfileModal();
+    }
+  });
+}
+if (profileModalClose) {
+  profileModalClose.addEventListener("click", () => profileModal.close());
+}
+if (profileDoneBtn) {
+  profileDoneBtn.addEventListener("click", () => profileModal.close());
+}
 
 // --- Form & Keyboard Shortcuts -----------------------------------------------
 composerForm.addEventListener("submit", (e) => {
