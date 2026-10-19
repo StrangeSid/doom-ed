@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.1] - 2026-10-19
+
+### Added
+- Rich student profile modal displaying school, program, grade, admission number, student ID, and full enrolled subjects list when clicking the user card.
+- Collapsible sidebar toggle on desktop and mobile with `localStorage` state persistence.
+- Automatic personal session bootstrapping from `~/.induslms_token.json` for local use.
+
+### Fixed
+- Assignment shaping across EOL tests, formative/summative assessments, and learning tasks to reliably populate overdue work, due soon, and weak topic fix lists.
+- Token expiration detection in `call_lms` to catch API error payloads and trigger refresh or re-authentication instead of swallowing errors.
+
+### Removed
+- Attendance component removed completely from backend payload, triage calculation, and frontend UI.
+- Client-side LLM provider input removed; model routing is managed transparently on the backend via `config.json`.
+
+---
+
 ## [0.1.0] - 2026-10-17
 
 ### Added
