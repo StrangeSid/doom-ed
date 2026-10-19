@@ -111,11 +111,11 @@ CONFIG_FILE: Path = Path(
 ).expanduser()
 
 _DEFAULT_LLM_CONFIG: dict[str, str] = {
-    "base_url": os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
-    "api_key": os.environ.get("LLM_API_KEY", ""),
-    "teacher_model": os.environ.get("TEACHER_MODEL", "google/gemini-2.5-pro"),
-    "maker_model": os.environ.get("MAKER_MODEL", "google/gemini-2.5-flash"),
-    "researcher_model": os.environ.get("RESEARCHER_MODEL", "google/gemini-2.5-flash"),
+    "base_url": os.environ.get("LLM_BASE_URL", "http://localhost:20128/v1"),
+    "api_key": os.environ.get("LLM_API_KEY", os.environ.get("OMNIROUTE_API_KEY", "")),
+    "teacher_model": os.environ.get("TEACHER_MODEL", "agy/gemini-3.8-flash-high"),
+    "maker_model": os.environ.get("MAKER_MODEL", "agy/gemini-3.8-flash-high"),
+    "researcher_model": os.environ.get("RESEARCHER_MODEL", "agy/gemini-3.8-flash-high"),
 }
 _LLM_FILE_KEYS: dict[str, str] = {
     "LLM_BASE_URL": "base_url",
