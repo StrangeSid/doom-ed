@@ -2,6 +2,8 @@
 
 Standalone AI Study Coach and Pedagogy Web Application grounded in live **Indus LMS** student data (`StrangeSid/induslms-agent`), the **53k+ IB Resource Catalog** (`StrangeSid/ib-resource-scraping`), and the **Dependency-Graph Teaching & Visual Verification System** (`StrangeSid/learning-agent` / `amosblomqvist/learn`), following the product specification in `StrangeSid/openLMS-indus/ROADMAP.md`.
 
+This file is the design brief. For the running system, see `ARCHITECTURE.md` (how it works and how it deploys), `DOCS.md` (every endpoint and agent tool), and `README.md` (how to run it).
+
 ---
 
 ## 1. Core Principles & Non-Negotiable Constraints
@@ -14,9 +16,13 @@ Standalone AI Study Coach and Pedagogy Web Application grounded in live **Indus 
    - Rich client-side rendering via Marked (Markdown + Obsidian callouts), KaTeX (`$...$` and `$$...$$`), Mermaid.js (live SVG diagrams), raw SVG, and the slide-over file viewer (`viewer.js`).
 3. **BFF Only (Backend-for-Frontend)**:
    - Browser never calls `api.induslms.com` directly (origin-bound tokens & CORS). All LMS, IB catalog, file-reading, and LLM calls go through the FastAPI server (`app/`).
+   - Model routing is server-side too. The browser never supplies a provider, a key, or a model name.
 4. **Academic Integrity & Ask-First Writes**:
    - **Never answer or submit live/unsubmitted tests**: Server inspects test/assessment submission status before any explanation or context injection. Unsubmitted EOL tests or assessments are rejected with `403 Forbidden` and redirected to syllabus pointers + IB practice bank equivalents.
    - **Ask-first writes**: Any LMS write (`submit`, `resubmit`, `request_extension`, `send_message`, `mark_read`) emits an interactive `<WriteConfirmCard>` with a one-time confirmation token, executes at most once, never auto-retries, and invalidates affected caches.
+5. **Local-First Storage**:
+   - Chats, messages, and files live on the student's own disk, partitioned by `owner = "{tenant}:{uid}"`. Indus LMS and the IB catalog are read live and never stored.
+   - Two students on one machine never see each other's work.
 
 ---
 
@@ -24,9 +30,10 @@ Standalone AI Study Coach and Pedagogy Web Application grounded in live **Indus 
 
 ```text
 /Users/sid/Documents/proj/doom-ed/
-├── INIT.md                    # Architecture, security, caching & module plan
-├── .gitignore                 # Excludes .env, data/, *.db*, .venv/
-├── .env.example               # Template for LLM API, secret key, IB URL, cache limits
+├── INIT.md                    # This design brief
+├── .gitignore                 # Excludes .env, config.json, data/, *.db*, .venv/
+├── .env.example               # Template for secrets, model routing, IB URL, cache limits
+├── config.example.json        # Model routing template (real config.json stays gitignored)
 ├── requirements.txt           # FastAPI, uvicorn, requests, cryptography, pymupdf, python-docx, python-pptx, openpyxl
 ├── app/
 │   ├── __init__.py
@@ -35,23 +42,24 @@ Standalone AI Study Coach and Pedagogy Web Application grounded in live **Indus 
 │   ├── sessions.py            # Opaque HttpOnly cookie sessions + 0600 SQLite store + Fernet encryption at rest
 │   ├── cache.py               # Per-student L1 in-memory cache (singleflight, mixed TTLs) + L2 encrypted SQLite cache
 │   ├── db.py                  # SQLite schema: threads, messages, file ACLs, FTS5 indices, visual store
-│   ├── security.py            # SSRF guard (_safe_fetch), per-owner ACL enforcement, Fernet blob encryption, write tokens
+│   ├── security.py            # SSRF guard (safe_fetch), Fernet cipher, write confirmation tokens
 │   ├── lms_bridge.py          # Indus LMS client wrapper, /api/study triage builder, background course file crawler
 │   ├── ib_client.py           # Client for https://ib-scrape.sidevv.xyz (/search, /facets, /resources, paper+MS pairing)
 │   ├── file_reader.py         # Unified file fetcher, encrypted/public blob cache, PyMuPDF + Office text/vision extractor
 │   ├── prompts.py             # Vendored system prompts: teach, visualize, mermaid-maker, svg-maker, researcher
-│   ├── orchestrator.py        # Multi-turn SSE agent loop, tool router, interactive card pause/resume, maker vision loop
+│   ├── orchestrator.py        # Streaming multi-turn agent loop, tool router, card pause/resume, maker vision loop
 │   └── research.py            # Web search & fetch tools for the researcher subagent
 ├── web/
 │   ├── index.html             # 3-pane layout: Triage & Fix-List | Pedagogy Chat & Prompt Cards | Lesson Log & Viewer
 │   └── assets/
 │       ├── style.css          # Academic UI styles, Obsidian callout themes, prompt cards, diagram frames
-│       ├── app.js             # Auth flow, triage loader, SSE stream client, thread switcher, settings modal
+│       ├── app.js             # Auth flow, triage loader, SSE stream client, thread switcher, re-auth banner
 │       ├── renderer.js        # Markdown + DOMPurify + KaTeX + Obsidian callouts + citation deep-links
 │       ├── cards.js           # <QuizCard> (shuffled + pinned 0: "I don't know"), <AskCard>, <WriteConfirmCard>
 │       ├── viz-engine.js      # Browser Mermaid/SVG renderer, getBBox() layout validator, <canvas> PNG rasterizer
 │       ├── viewer.js          # In-app slide-over file viewer (PDF.js with #page=N jump, images, DOCX, XLSX, PPTX)
-│       └── log-export.js      # Live Obsidian callout + LaTeX lesson log builder & 1-click clipboard/markdown export
+│       ├── log-export.js      # Live Obsidian callout + LaTeX lesson log builder & 1-click clipboard/markdown export
+│       └── vendor/            # Local copies of marked, KaTeX, DOMPurify, Mermaid (CDN fallback only)
 ├── data/                      # Gitignored runtime storage (0700 permissions)
 │   ├── sessions.sqlite        # 0600 session + encrypted L2 payload/files cache
 │   ├── doomed.sqlite          # 0600 threads, FTS5 indices, file metadata, per-owner ACL table
@@ -61,10 +69,17 @@ Standalone AI Study Coach and Pedagogy Web Application grounded in live **Indus 
 │   ├── renders/               # Encrypted temporary PDF page rasterizations for vision inspection
 │   └── viz/                   # Published SVG + PNG diagrams per thread
 └── tests/
-    ├── test_security_cache.py # Cross-student isolation, Fernet encryption at rest, SSRF guard, TTL eviction
-    ├── test_safety.py         # Unsubmitted live test blocking & single-use write confirmation tokens
-    ├── test_file_reader.py    # PDF/DOCX/PPTX/XLSX parsing, FTS5 page search, vision rasterization
-    └── test_orchestrator.py   # Quiz/Ask state machine, maker DOM+vision loop, IB paper+markscheme pairing
+    ├── test_security_cache.py     # Cross-student isolation, Fernet encryption at rest, SSRF guard, TTL eviction
+    ├── test_security_hardening.py # Regression tests for each closed vulnerability
+    ├── test_session_expiry.py     # Expired-token behaviour: stale data served, re-auth demanded
+    ├── test_lms_bridge.py         # Live LMS bridge, triage calculation, write confirmation
+    ├── test_ib_client.py          # IB paper+markscheme pairing
+    ├── test_file_reader.py        # PDF/DOCX/PPTX/XLSX parsing, FTS page search, ACL check, vision rendering
+    ├── test_orchestrator.py       # Quiz/Ask state machine, card round trip, maker DOM+vision loop
+    ├── test_prompts.py            # Prompt integrity and web search
+    ├── test_api.py                # FastAPI endpoint integration
+    ├── test_e2e_playwright.py     # Browser tests for auth, triage, cards, viewer
+    └── test_frontend_xss.py       # Proof that LMS and model text cannot inject markup
 ```
 
 ---
