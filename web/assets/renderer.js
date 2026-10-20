@@ -70,9 +70,17 @@ function escapeAttr(value) {
 
 export function renderMarkdown(content) {
   if (!content) return "";
+  const source = String(content);
+
+  // Fail closed: if DOMPurify is missing we escape the generated HTML instead
+  // of returning it. If marked is missing we escape the source text as well.
+  const canSanitize = Boolean(
+    window.DOMPurify && typeof window.DOMPurify.sanitize === "function"
+  );
+  let fallbackEscaped = false;
 
   // 1. Pre-process Obsidian Callouts: > [!type] Title
-  let processed = content.replace(
+  let processed = source.replace(
     /(?:^|\n)> \[!([a-zA-Z0-9_-]+)\][ \t]*([^\n]*)\n((?:>.*\n?)*)/g,
     (match, type, title, bodyLines) => {
       const kind = calloutKind(type);
@@ -81,7 +89,7 @@ export function renderMarkdown(content) {
         .split("\n")
         .map((line) => line.replace(/^>[ \t]?/, ""))
         .join("\n");
-      return `\n<div class="callout callout-${kind}">\n<div class="callout-title"><span class="callout-icon">${CALLOUT_ICONS[kind]}</span><span class="callout-title-text">${calloutTitle}</span></div>\n<div class="callout-body">\n\n${cleanBody}\n\n</div>\n</div>\n`;
+      return `\n<div class="callout callout-${kind}">\n<div class="callout-title"><span class="callout-icon">${CALLOUT_ICONS[kind]}</span><span class="callout-title-text">${escapeAttr(calloutTitle)}</span></div>\n<div class="callout-body">\n\n${cleanBody}\n\n</div>\n</div>\n`;
     }
   );
 
@@ -119,8 +127,9 @@ export function renderMarkdown(content) {
   if (window.marked && window.marked.parse) {
     html = window.marked.parse(processed, { breaks: true, gfm: true });
   } else {
-    // Fallback if marked not ready
-    html = processed.replace(/\n/g, "<br/>");
+    // No parser: emit literal text only. Newlines are the sole trusted markup.
+    html = escapeAttr(processed).replace(/\n/g, "<br/>");
+    fallbackEscaped = true;
   }
 
   // 4. Citation and File badge conversion
@@ -130,16 +139,19 @@ export function renderMarkdown(content) {
     (match, href, text) =>
       `<button class="citation-chip" data-viewer-ref="${escapeAttr(href)}" type="button">` +
       `<span class="chip-icon">${CHIP_ICON}</span>` +
-      `<span class="chip-text">${text}</span>` +
+      `<span class="chip-text">${escapeAttr(text)}</span>` +
       `</button>`
   );
 
-  // 5. Sanitize HTML via DOMPurify (keeps inline SVG: DOMPurify allows svg by default)
-  if (window.DOMPurify && window.DOMPurify.sanitize) {
+  // 5. Sanitize HTML via DOMPurify (keeps inline SVG: DOMPurify allows svg by default).
+  // Never fail open: without DOMPurify the whole result is escaped.
+  if (canSanitize) {
     html = window.DOMPurify.sanitize(html, {
       ADD_TAGS: ["button"],
       ADD_ATTR: ["data-viewer-ref", "type"],
     });
+  } else if (!fallbackEscaped) {
+    html = escapeAttr(html);
   }
 
   return html;

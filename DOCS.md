@@ -60,10 +60,60 @@ Complete API and agent tool specifications for **doom-ed**.
 
 ### 1.6 Runtime Settings
 
+Model routing is server-side configuration. The browser never sends a provider or a key, and the API key never leaves the server.
+
 | Endpoint | Method | Body / Params | Description |
 |---|---|---|---|
-| `/api/settings` | `GET` | — | Returns current LLM configuration (`base_url`, `teacher_model`, `maker_model`, `researcher_model`). |
-| `/api/settings` | `POST` | `{"base_url": "...", "api_key": "...", "teacher_model": "..."}` | Updates runtime model configuration. |
+| `/api/settings` | `GET` | — | Returns the active routing: `base_url`, `teacher_model`, `maker_model`, `researcher_model`, and `api_key_set` (a boolean). The key itself is never returned. |
+| `/api/settings` | `POST` | `{"base_url": "...", "api_key": "...", "teacher_model": "..."}` | Updates routing and writes it to `config.json`. Only accepted from a loopback request. |
+
+---
+
+## 1.7 Health & Error Semantics
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/health` | `GET` | Liveness probe. Returns `{"status": "ok", "app": "doom-ed", "version": "0.1.0"}`. No auth required. |
+
+Error codes the browser handles:
+
+| Code | Meaning | Client behaviour |
+|---|---|---|
+| `401` | No session, expired session, or the Indus LMS token is invalid. | Sign-in prompt, and a toast naming the expired session. |
+| `403` | The student tried to read a file outside their `owner` scope, or asked about a live/unsubmitted test. | Message shown, request refused. |
+| `502` | Indus LMS or the IB catalog failed upstream. | Toast with the upstream detail. |
+
+`GET /api/session` returns `200` with a `profile_error` field when the session is valid but the LMS profile call failed. So the shell still renders while the student sees what is missing.
+
+---
+
+## 1.8 Expired Indus Token
+
+The Indus LMS access token expires on its own schedule, independently of the doom-ed session. When that happens:
+
+1. The last known payload stays on screen. It's the student's own data, and an empty page helps nobody.
+2. The response carries an `auth_error` field, and a banner appears above the chat with a **"Sign in again"** action. It stays up until a successful sign-in, so stale numbers are never mistaken for live ones.
+3. The stale copy is only served inside the persistent cache window (one hour by default). Past that the API returns `401` and the student must sign in.
+4. A successful sign-in clears the banner and reloads the triage.
+
+---
+
+## 1.9 SSE Event Stream
+
+`POST /api/chat/send` returns `text/event-stream`. Frames are separated by a blank line.
+
+| Event | Data | Meaning |
+|---|---|---|
+| `thread_created` | `{thread_id, thread}` | Emitted first when the request had no `thread_id`. |
+| `user_message` | `{content}` | Echo of the accepted prompt. |
+| `token` | `{content}` | A chunk of teacher prose. Frames arrive as the model writes, so the bubble fills progressively. |
+| `tool_start` | `{tool_name, call_id, args}` | The agent began a tool call. |
+| `tool_done` | `{tool_name, call_id, result}` | The tool finished. |
+| `card` | card payload | An interactive card: `quiz`, `ask`, or `write_confirm`. The turn pauses until the student replies. |
+| `file_attached` | `{ref, sha256, filename, page_count}` | A file was attached to the thread. |
+| `viz_render_request` | `{call_id, kind, slug, source}` | The browser must render the diagram, validate it, and POST the result to `/api/chat/viz-feedback`. |
+| `done` | `{thread_id}` | The turn finished. |
+| `error` | `{error}` | Something failed. The message is shown as a toast. |
 
 ---
 
@@ -71,15 +121,22 @@ Complete API and agent tool specifications for **doom-ed**.
 
 The teacher agent has 12 specialized tools:
 
-1. **`quiz`**: Poses ONE calibrated multiple-choice check to bracket knowledge or test node understanding. Options are client-shuffled; correct answer and explanation are held server-side until student submission.
-2. **`ask_user_question`**: Poses an ungraded question for goal-setting (Phase 1 Part B) or dependency-graph approval (Phase 2).
+1. **`quiz`**: Poses ONE calibrated multiple-choice check to bracket knowledge or test node understanding. The server shuffles the real options and reassigns indices 1..N; the browser renders a pinned `0: "I don't know"` row above them. The correct answer and explanation stay server-side until the student submits.
+2. **`ask_user_question`**: Poses an ungraded question for goal-setting (Phase 1 Part B) or dependency-graph approval (Phase 2). The browser appends an "Other (type your own)" field.
 3. **`create_visual`**: Dispatches `mermaid-maker` or `svg-maker` with a pruned brief ($\le 5\text{–}7$ elements) for web-native visual authoring.
-4. **`search_lms_files`**: FTS5 search across student's enrolled course materials, notes, slides, and task attachments.
-5. **`browse_lms_folder`**: Walks folder hierarchy of an enrolled course.
+4. **`search_lms_files`**: FTS5 search across the student's enrolled course materials, notes, slides, and task attachments. Results are trimmed to the fields a teacher needs.
+5. **`browse_lms_folder`**: Walks the folder hierarchy of an enrolled course.
 6. **`search_ib_resources`**: Queries the 53,000+ IB resource catalog. Past papers include their paired markscheme.
 7. **`select_and_attach_files`**: Autonomously downloads and attaches relevant LMS/IB files to the chat thread for reading.
 8. **`read_document`**: Reads decrypted text and checks for diagrams/figures on specified page ranges (`"1-5"`).
 9. **`search_within_document`**: Keyword search inside an attached document, returning ranked page numbers and snippets.
 10. **`inspect_document_pages`**: Rasterizes PDF pages into PNG images on-demand for vision LLM inspection.
-11. **`research_topic`**: Web search and fetch tool for researcher subagent and fact verification.
+11. **`research_topic`**: Web search and fetch tool for the researcher subagent and fact verification.
 12. **`confirm_lms_write`**: Emits an interactive `<WriteConfirmCard>` requiring student confirmation before modifying school data.
+
+### 2.1 Loop Guards
+
+The agent takes at most 12 autonomous tool turns per user message. Two guards keep it from stalling:
+
+- **Duplicate call suppression**: a tool call with an identical name and identical arguments is answered once. A repeat returns `{"status": "duplicate"}` and points the model at the earlier result.
+- **Prose before cards**: the teacher prompt requires a short lead-in paragraph before every `quiz` call, so the student reads the reason for the check before the card appears.

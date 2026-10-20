@@ -63,19 +63,31 @@ cp config.example.json config.json
 
 ### 2. Configure environment and models
 
-Edit `config.json` (or `.env`):
+Model routing lives in `config.json` on the backend. The browser never asks for a provider or key.
 
 ```json
 {
   "llm": {
-    "base_url": "https://openrouter.ai/api/v1",
-    "api_key": "your-key",
-    "teacher_model": "google/gemini-2.5-pro",
-    "maker_model": "google/gemini-2.5-flash",
-    "researcher_model": "google/gemini-2.5-flash"
+    "base_url": "http://localhost:20128/v1",
+    "api_key": "your-omniroute-key",
+    "teacher_model": "agy/gemini-3.8-flash-high",
+    "maker_model": "agy/gemini-3.8-flash-high",
+    "researcher_model": "agy/gemini-3.8-flash-high"
   }
 }
 ```
+
+Any OpenAI-compatible endpoint works. `.env` supplies fallbacks and the Fernet secret:
+
+```ini
+DOOMED_SECRET_KEY=your-32-byte-passphrase
+LLM_BASE_URL=http://localhost:20128/v1
+LLM_API_KEY=your-omniroute-key
+IB_SCRAPE_BASE_URL=https://ib-scrape.sidevv.xyz
+DOOMED_AUTO_BOOTSTRAP_TOKEN=1
+```
+
+If `DOOMED_SECRET_KEY` is missing, one is generated into `data/.secret_key` with `0600` permissions.
 
 ### 3. Run the development server
 
@@ -84,7 +96,7 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 Open `http://127.0.0.1:8000`.
-- If `~/.induslms_token.json` exists on your system, the session bootstraps automatically on launch.
+- If `~/.induslms_token.json` exists on your system and `DOOMED_AUTO_BOOTSTRAP_TOKEN=1`, the session signs in by itself. The bootstrap only applies to requests from `127.0.0.1`.
 - Otherwise, click **"Sign in with Indus LMS"** and enter your school credentials.
 
 ---
@@ -98,6 +110,8 @@ pytest
 # Run Playwright browser tests
 pytest tests/test_e2e_playwright.py
 ```
+
+Browser tests need a Chrome binary. Playwright's bundled Chromium works out of the box; on a machine without it, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` or install it with `playwright install chromium`.
 
 ---
 
@@ -134,8 +148,10 @@ doom-ed/
 │   ├── test_ib_client.py       # IB paper+markscheme pairing tests
 │   ├── test_lms_bridge.py      # Live LMS bridge, triage calculation, write confirmation tests
 │   ├── test_file_reader.py     # Multimodal file parsing, FTS search, ACL check, vision rendering
+│   ├── test_orchestrator.py    # Quiz state, grading, card round trip, visual maker loop
 │   ├── test_api.py             # FastAPI endpoint integration tests
 │   └── test_e2e_playwright.py  # Real browser Playwright tests for auth, triage, cards, viewer
+├── config.example.json     # Model routing template (real config.json stays gitignored)
 ├── ARCHITECTURE.md          # Deployment & infrastructure architecture
 ├── DOCS.md                  # Detailed API & tool documentation
 ├── CONTRIBUTING.md          # Contributing guidelines & development standards

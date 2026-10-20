@@ -4,9 +4,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: blob:; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; worker-src 'self' blob: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net">
 <title>doom-ed · Study Coach</title>
 <meta name="description" content="AI study coach grounded in live Indus LMS data and the IB resource catalog. Three-phase pedagogy: Probe, Plan, Teach Loop.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230D3A35'/%3E%3Ctext x='16' y='23' font-family='Georgia,serif' font-style='italic' font-size='20' fill='%23E8A33D' text-anchor='middle'%3Ed%3C/text%3E%3C/svg%3E">
+<link rel="icon" referrer="no-referrer" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230D3A35'/%3E%3Ctext x='16' y='23' font-family='Georgia,serif' font-style='italic' font-size='20' fill='%23E8A33D' text-anchor='middle'%3Ed%3C/text%3E%3C/svg%3E">
 
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
@@ -194,6 +195,12 @@
 
   <!-- ============================================================== CENTER: chat -->
   <main id="center-pane" class="pane-center">
+
+    <div id="reauth-banner" class="reauth-banner" role="alert" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+      <span id="reauth-message">Your Indus LMS session expired.</span>
+      <button id="reauth-btn" class="btn sm" type="button">Sign in again</button>
+    </div>
 
     <header class="chat-header">
       <button id="left-toggle" class="icon-btn pane-toggle" type="button" aria-label="Toggle study triage panel" aria-controls="left-pane" aria-expanded="true" title="Toggle study triage panel">

@@ -12,10 +12,13 @@ Provides:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
@@ -53,15 +56,25 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT_DIR / "web"
 DATA_DIR = config.ensure_data_dir()
 
+logger = logging.getLogger("doomed")
+
 app = FastAPI(
     title="doom-ed",
     description="AI Study Coach & Pedagogy System grounded in Indus LMS and IB Resources",
     version="0.1.0",
 )
 
+# CORS is a same-origin app. A wildcard with credentials lets any site try
+# authenticated requests, so only the configured origins are allowed.
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("DOOMED_ALLOWED_ORIGINS", "http://127.0.0.1:8000,http://localhost:8000").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -91,11 +104,22 @@ def startup_init() -> None:
             pass
 
 
+def _is_loopback(request: Request) -> bool:
+    """True when the request came from the machine itself."""
+    host = request.client.host if request.client else ""
+    return host in ("127.0.0.1", "::1", "localhost")
+
+
 def get_current_session(request: Request, doomed_sid: str | None = Cookie(None)) -> Session:
-    """Retrieve authenticated session from HttpOnly cookie or bootstrap local token."""
+    """Retrieve the authenticated session.
+
+    Falls back to bootstrapping from the local Indus token file, but only when
+    the operator opted in AND the request came from loopback. Without that
+    guard any process on the machine (or a tunnel) could read the student's data.
+    """
     sid = doomed_sid or request.headers.get("x-session-id")
     sess = session_store.get(sid) if sid else None
-    if not sess and os.environ.get("DOOMED_AUTO_BOOTSTRAP_TOKEN", "1") == "1":
+    if not sess and os.environ.get("DOOMED_AUTO_BOOTSTRAP_TOKEN", "0") == "1" and _is_loopback(request):
         sess = import_local_indus_token(session_store)
     if not sess:
         raise HTTPException(
@@ -173,17 +197,25 @@ def session_info(
         "tenant": sess.tenant,
         "grade": sess.grade,
     }
+    profile_error: str | None = None
     try:
         payload = lms_bridge.fetch_student_payload(sess, session_store, refresh=False)
         if isinstance(payload.get("student"), dict):
             student_info.update(payload["student"])
-    except Exception:
-        pass
+        if payload.get("_auth_error"):
+            profile_error = payload["_auth_error"]
+    except lms_bridge.LMSNotAuthenticatedError as e:
+        profile_error = str(e)
+    except Exception as e:
+        profile_error = str(e)
 
-    return {
+    body: dict[str, Any] = {
         "status": "ok",
         "student": student_info,
     }
+    if profile_error:
+        body["profile_error"] = profile_error
+    return body
 
 
 # --- Study Coach Triage ------------------------------------------------------
@@ -199,9 +231,31 @@ def study_triage(
     sess = get_current_session(request, doomed_sid)
     try:
         triage = lms_bridge.build_study_triage(sess, db, session_store, refresh=refresh)
-        return {"status": "ok", "data": triage}
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+        body: dict[str, Any] = {"status": "ok", "data": triage}
+        # The triage may have been built from the last known payload because
+        # the Indus token expired. Say so instead of pretending it is live.
+        if triage.pop("_auth_error", None):
+            body["auth_error"] = "Your Indus LMS session expired. Sign in to refresh your data."
+        return body
+    except lms_bridge.LMSNotAuthenticatedError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Your Indus LMS session expired. Sign in again.",
+        )
+    except lms_bridge.LMSUpstreamError:
+        # The upstream message can name internal ids and URLs. Log it, but
+        # return something the browser can show without leaking internals.
+        logger.exception("Indus LMS upstream failure while building the study triage")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Indus LMS did not respond. Try again shortly.",
+        )
+    except Exception:
+        logger.exception("Unexpected failure while building the study triage")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not build the study briefing. Try again shortly.",
+        )
 
 
 # --- Threads & Chat ----------------------------------------------------------
@@ -307,14 +361,37 @@ async def chat_send(
                     "event": "thread_created",
                     "data": json.dumps({"thread_id": thread_id, "thread": created_thread}),
                 }
-            events = orchestrator.process_user_turn(
-                session=sess,
-                thread_id=thread_id,
-                user_message=body.message,
-                student_triage=triage,
-                attached_refs=body.attached_refs,
-            )
-            for ev in events:
+            # The orchestrator is a blocking generator (LLM calls, file reads).
+            # Run it in a worker thread and push events into the SSE stream as
+            # they are produced, so prose streams to the browser live.
+            queue: asyncio.Queue = asyncio.Queue()
+            loop = asyncio.get_running_loop()
+            sentinel = object()
+
+            def _pump() -> None:
+                try:
+                    for ev in orchestrator.process_user_turn(
+                        session=sess,
+                        thread_id=thread_id,
+                        user_message=body.message,
+                        student_triage=triage,
+                        attached_refs=body.attached_refs,
+                    ):
+                        loop.call_soon_threadsafe(queue.put_nowait, ev)
+                except Exception as e:  # surfaced to the browser, not swallowed
+                    loop.call_soon_threadsafe(
+                        queue.put_nowait,
+                        {"event": "error", "data": {"error": str(e)}},
+                    )
+                finally:
+                    loop.call_soon_threadsafe(queue.put_nowait, sentinel)
+
+            threading.Thread(target=_pump, daemon=True).start()
+
+            while True:
+                ev = await queue.get()
+                if ev is sentinel:
+                    break
                 yield {
                     "event": ev["event"],
                     "data": json.dumps(ev["data"]),
@@ -371,6 +448,78 @@ def viz_feedback(
     return res
 
 
+def _sniff_mime(raw: bytes, declared: str, filename: str) -> str:
+    """Determine the served MIME type from the bytes themselves.
+
+    A declared `text/html` on an uploaded file would otherwise be served
+    inline from our own origin and run as same-origin script. Only a small
+    allowlist is served inline; everything else becomes an attachment.
+    """
+    import mimetypes
+
+    sniffed = ""
+    if raw.startswith(b"%PDF-"):
+        sniffed = "application/pdf"
+    elif raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        sniffed = "image/png"
+    elif raw.startswith(b"\xff\xd8\xff"):
+        sniffed = "image/jpeg"
+    elif raw.startswith(b"GIF87a") or raw.startswith(b"GIF89a"):
+        sniffed = "image/gif"
+    elif raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        sniffed = "image/webp"
+    elif raw.lstrip()[:5] in (b"<?xml", b"<svg") and b"<svg" in raw[:1024].lower():
+        sniffed = "image/svg+xml"
+
+    if sniffed:
+        return sniffed
+
+    # Plain text is safe to serve inline, but only when the bytes really are
+    # text and the declared type agrees.
+    guessed, _ = mimetypes.guess_type(filename or "")
+    if guessed and guessed.startswith("text/") and _looks_like_text(raw):
+        return guessed
+    if (declared or "").lower().startswith("text/plain") and _looks_like_text(raw):
+        return "text/plain"
+    return "application/octet-stream"
+
+
+def _looks_like_text(raw: bytes) -> bool:
+    """True when the bytes decode cleanly and hold no NUL or control bytes."""
+    if b"\x00" in raw[:4096]:
+        return False
+    try:
+        sample = raw[:4096].decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return not any(ord(ch) < 9 or 13 < ord(ch) < 32 for ch in sample)
+
+
+# Files that may be rendered inline in the browser. Everything else is sent as
+# an attachment so the browser never executes it against our origin.
+_INLINE_MIME = {
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/json",
+    "application/xml",
+    "text/xml",
+}
+
+
+def _safe_filename(name: str) -> str:
+    """A filename safe to put in a Content-Disposition header."""
+    import re as _re
+
+    clean = _re.sub(r'[\x00-\x1f\x7f";]', "", (name or "file").replace("\\", "/").rsplit("/", 1)[-1])
+    return (clean[:200] or "file")
+
+
 @app.post("/api/upload")
 async def upload_file(
     file: UploadFile = File(...),
@@ -417,33 +566,47 @@ def serve_file(
         raise HTTPException(status_code=404, detail="File not found.")
 
     total_len = len(raw_bytes)
-    mime = file_row.get("mime") or "application/octet-stream"
-    fname = file_row.get("filename") or f"{sha256}.bin"
+    fname = _safe_filename(file_row.get("filename") or f"{sha256}.bin")
+    # The declared type is not trusted. Serve inline only what we recognise as
+    # inert; everything else becomes an attachment the browser downloads.
+    mime = _sniff_mime(raw_bytes, file_row.get("mime") or "", fname)
+    inline = mime in _INLINE_MIME
+    if not inline:
+        mime = "application/octet-stream"
+    disposition = "inline" if inline else "attachment"
+
+    common_headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Type": mime,
+        "Cache-Control": "private, no-cache",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox",
+    }
 
     # Support HTTP Range requests for PDF.js page streaming
     if range and range.startswith("bytes="):
         range_spec = range[6:].strip()
         parts = range_spec.split("-", 1)
-        start = int(parts[0]) if parts[0] else 0
-        end = int(parts[1]) if parts[1] else total_len - 1
+        try:
+            start = int(parts[0]) if parts[0] else 0
+            end = int(parts[1]) if parts[1] else total_len - 1
+        except ValueError:
+            raise HTTPException(status_code=416, detail="Malformed Range header.")
         start = max(0, min(start, total_len - 1))
         end = max(start, min(end, total_len - 1))
         chunk_len = end - start + 1
         headers = {
+            **common_headers,
             "Content-Range": f"bytes {start}-{end}/{total_len}",
-            "Accept-Ranges": "bytes",
             "Content-Length": str(chunk_len),
-            "Content-Type": mime,
-            "Cache-Control": "private, no-cache",
+            "Content-Disposition": f'{disposition}; filename="{fname}"',
         }
         return Response(content=raw_bytes[start : end + 1], status_code=206, headers=headers)
 
     headers = {
-        "Accept-Ranges": "bytes",
+        **common_headers,
         "Content-Length": str(total_len),
-        "Content-Type": mime,
-        "Content-Disposition": f'inline; filename="{fname}"',
-        "Cache-Control": "private, no-cache",
+        "Content-Disposition": f'{disposition}; filename="{fname}"',
     }
     return Response(content=raw_bytes, status_code=200, headers=headers)
 
@@ -499,11 +662,39 @@ def ib_facets(q: str = "", kind: str | None = None) -> dict[str, Any]:
 # --- Settings / Runtime Config -----------------------------------------------
 
 
+def _public_config(cfg: dict[str, str]) -> dict[str, Any]:
+    """Config shape safe to send to the browser.
+
+    The API key never leaves the server. The browser only needs to know
+    whether one is set, and which models are in use.
+    """
+    key = cfg.get("api_key") or ""
+    return {
+        "base_url": cfg.get("base_url", ""),
+        "api_key_set": bool(key),
+        "api_key_hint": f"...{key[-4:]}" if len(key) >= 4 else ("set" if key else ""),
+        "teacher_model": cfg.get("teacher_model", ""),
+        "maker_model": cfg.get("maker_model", ""),
+        "researcher_model": cfg.get("researcher_model", ""),
+    }
+
+
+def _require_admin(request: Request) -> None:
+    """Model routing is server-side configuration, not a student setting.
+
+    Only a request from the machine itself may change it.
+    """
+    if not _is_loopback(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Model routing is configured on the server.",
+        )
+
+
 @app.get("/api/settings")
 def get_settings(request: Request, doomed_sid: str | None = Cookie(None)) -> dict[str, Any]:
     get_current_session(request, doomed_sid)
-    cfg = config.get_llm_config()
-    return {"status": "ok", "config": cfg}
+    return {"status": "ok", "config": _public_config(config.get_llm_config())}
 
 
 class UpdateSettingsRequest(BaseModel):
@@ -521,6 +712,7 @@ def update_settings(
     doomed_sid: str | None = Cookie(None),
 ) -> dict[str, Any]:
     get_current_session(request, doomed_sid)
+    _require_admin(request)
     config.update_llm_config(
         base_url=body.base_url,
         api_key=body.api_key,
@@ -529,7 +721,7 @@ def update_settings(
         researcher_model=body.researcher_model,
         persist=True,
     )
-    return {"status": "ok", "config": config.get_llm_config()}
+    return {"status": "ok", "config": _public_config(config.get_llm_config())}
 
 
 # --- Mount Frontend ----------------------------------------------------------

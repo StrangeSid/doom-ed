@@ -16,16 +16,17 @@ from __future__ import annotations
 import base64
 import json
 import random
+import re
 import time
 import uuid
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, Generator, Iterator, List, Optional
 
 import requests
 
 from app import config, file_reader, ib_client, lms_bridge, prompts, research
 from app.db import Database
-from app.security import WriteConfirmationManager, assert_not_live_test
+from app.security import WriteConfirmationManager, assert_not_live_test, sanitize_filename
 from app.sessions import Session
 
 
@@ -280,6 +281,39 @@ TOOL_DEFINITIONS = [
 ]
 
 
+_FILE_ROW_KEEP = ("ref", "title", "filename", "subject", "folder_path", "teacher", "ext")
+
+
+def _clamp_int(value: Any, low: int, high: int, default: int | None = None) -> int:
+    """Read an integer from a tool argument without trusting the model."""
+    try:
+        num = int(value)
+    except (TypeError, ValueError):
+        num = default if default is not None else low
+    return max(low, min(num, high))
+
+
+def _slim_file_rows(rows: Any) -> Any:
+    """Trim raw LMS file rows to the fields a teacher actually needs.
+
+    The full rows carry an `owner` key, timestamps, and a long base64 blob
+    inside `lms://url/...` refs. Feeding those to the model wastes context
+    and buries the useful metadata.
+    """
+    if not isinstance(rows, list):
+        return rows
+    out = []
+    for row in rows[:25]:
+        if not isinstance(row, dict):
+            continue
+        slim = {k: row.get(k) for k in _FILE_ROW_KEEP if row.get(k)}
+        ref = slim.get("ref")
+        if isinstance(ref, str) and ref.startswith("lms://url/"):
+            slim["ref"] = "lms://url/<attachment>"
+        out.append(slim)
+    return out
+
+
 def call_llm_chat(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
@@ -307,11 +341,79 @@ def call_llm_chat(
         body["tools"] = tools
 
     url = f"{base_url}/chat/completions"
-    resp = requests.post(url, headers=headers, json=body, timeout=120, stream=stream)
+    resp = requests.post(url, headers=headers, json=body, timeout=180, stream=stream)
     resp.raise_for_status()
     if stream:
         return resp
     return resp.json()
+
+
+def _stream_message(resp) -> Generator[str, None, dict[str, Any]]:
+    """Read an OpenAI-compatible SSE stream.
+
+    Yields each content delta as it arrives. The generator's return value
+    (StopIteration.value) is the assembled message:
+    ``{"content": str, "tool_calls": [...], "finish_reason": str}``.
+
+    Tool call arguments arrive fragmented across chunks, so they are
+    accumulated per index and parsed once at the end.
+    """
+    content_parts: list[str] = []
+    tool_acc: dict[int, dict[str, Any]] = {}
+    finish_reason = ""
+
+    for raw_line in resp.iter_lines(decode_unicode=True):
+        if not raw_line:
+            continue
+        line = raw_line.strip()
+        if line.startswith("data:"):
+            line = line[5:].strip()
+        if not line or line == "[DONE]":
+            continue
+        try:
+            chunk = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+
+        choices = chunk.get("choices") or []
+        if not choices:
+            continue
+        choice = choices[0]
+        finish_reason = choice.get("finish_reason") or finish_reason
+        delta = choice.get("delta") or {}
+
+        piece = delta.get("content")
+        if piece:
+            content_parts.append(piece)
+            yield piece
+
+        for tc in delta.get("tool_calls") or []:
+            idx = tc.get("index", 0)
+            slot = tool_acc.setdefault(idx, {"id": "", "type": "function", "name": "", "arguments": ""})
+            if tc.get("id"):
+                slot["id"] = tc["id"]
+            fn = tc.get("function") or {}
+            if fn.get("name"):
+                slot["name"] = fn["name"]
+            if fn.get("arguments"):
+                slot["arguments"] += fn["arguments"]
+
+    tool_calls: list[dict[str, Any]] = []
+    for idx in sorted(tool_acc):
+        slot = tool_acc[idx]
+        if not slot.get("name"):
+            continue
+        tool_calls.append({
+            "id": slot.get("id") or f"call_{idx}",
+            "type": "function",
+            "function": {"name": slot["name"], "arguments": slot.get("arguments") or "{}"},
+        })
+
+    return {
+        "content": "".join(content_parts),
+        "tool_calls": tool_calls,
+        "finish_reason": finish_reason,
+    }
 
 
 class Orchestrator:
@@ -331,10 +433,13 @@ class Orchestrator:
         user_message: str,
         student_triage: dict[str, Any] | None = None,
         attached_refs: list[str] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Process one user turn. Executes LLM calls and tool executions, saving all messages
-        to database, and returns the sequence of SSE events to stream."""
-        events: list[dict[str, Any]] = []
+    ) -> Iterator[dict[str, Any]]:
+        """Process one user turn.
+
+        Yields SSE events as they happen: prose tokens stream out while the
+        model is still writing, tool calls report their start and finish,
+        and interactive cards pause the loop until the student answers.
+        """
 
         thread = self.db.get_thread(session.owner, thread_id)
         if not thread:
@@ -357,7 +462,7 @@ class Orchestrator:
                         filename=f_meta.get("filename", ""),
                         attached_by="user",
                     )
-                    events.append({
+                    yield {
                         "event": "file_attached",
                         "data": {
                             "ref": r,
@@ -365,7 +470,7 @@ class Orchestrator:
                             "filename": f_meta.get("filename", ""),
                             "page_count": f_meta.get("page_count", 1),
                         },
-                    })
+                    }
                 except Exception as e:
                     pass
 
@@ -375,7 +480,7 @@ class Orchestrator:
             role="user",
             content=user_message,
         )
-        events.append({"event": "user_message", "data": {"content": user_message}})
+        yield {"event": "user_message", "data": {"content": user_message}}
 
         # 3. Build system prompt & message history
         active_attachments = self.db.list_thread_attachments(thread_id)
@@ -398,21 +503,36 @@ class Orchestrator:
                 msg_dict["tool_call_id"] = m["tool_call_id"]
             llm_messages.append(msg_dict)
 
-        # 4. Agent loop (up to 5 autonomous tool turns)
-        for turn_idx in range(5):
+        # 4. Agent loop (up to 12 autonomous tool turns)
+        # Repeating the same tool call with the same arguments returns the same
+        # result, so we track signatures and short-circuit duplicates. Without
+        # this the model can burn every turn re-running one search.
+        seen_tool_calls: set[str] = set()
+        for turn_idx in range(12):
             cfg = config.get_llm_config()
-            teacher_model = cfg.get("teacher_model", "google/gemini-2.5-pro")
-            response = call_llm_chat(
+            teacher_model = cfg.get("teacher_model", "agy/gemini-3.8-flash-high")
+
+            # Stream the completion so the student sees prose while the model is
+            # still writing instead of staring at a blank bubble for 30s.
+            resp = call_llm_chat(
                 messages=llm_messages,
                 tools=TOOL_DEFINITIONS,
                 model=teacher_model,
                 temperature=0.2,
-                stream=False,
+                stream=True,
             )
+            stream = _stream_message(resp)
+            try:
+                while True:
+                    piece = next(stream)
+                    yield {"event": "token", "data": {"content": piece}}
+            except StopIteration as stop:
+                message = stop.value or {}
+            except Exception:
+                message = {}
 
-            choice = response["choices"][0]["message"]
-            content = choice.get("content") or ""
-            tool_calls = choice.get("tool_calls") or []
+            content = message.get("content") or ""
+            tool_calls = message.get("tool_calls") or []
 
             # Save assistant message
             self.db.add_message(
@@ -421,9 +541,6 @@ class Orchestrator:
                 content=content,
                 tool_calls=tool_calls if tool_calls else None,
             )
-
-            if content:
-                events.append({"event": "token", "data": {"content": content}})
 
             if not tool_calls:
                 break
@@ -439,10 +556,27 @@ class Orchestrator:
                     pass
                 call_id = tc["id"]
 
-                events.append({
+                # Duplicate guard: identical tool + identical args yields the same
+                # answer. Answer it once and tell the model it already has it.
+                signature = f"{fn_name}:{json.dumps(fn_args, sort_keys=True, default=str)}"
+                if signature in seen_tool_calls:
+                    yield self._append_tool_result(
+                        llm_messages,
+                        thread_id,
+                        call_id,
+                        {
+                            "status": "duplicate",
+                            "note": "This exact call already ran earlier in this turn. Use the earlier result instead of repeating it.",
+                        },
+                        fn_name,
+                    )
+                    continue
+                seen_tool_calls.add(signature)
+
+                yield {
                     "event": "tool_start",
                     "data": {"tool_name": fn_name, "call_id": call_id, "args": fn_args},
-                })
+                }
 
                 # A. QUIZ CARD (PAUSES LOOP)
                 if fn_name == "quiz":
@@ -479,7 +613,7 @@ class Orchestrator:
                         owner=session.owner,
                         question=question,
                         options=new_options,
-                        correct_answer=correct_indices,
+                        correct=correct_indices,
                         explanation=explanation,
                         multi_select=multi_select,
                     )
@@ -492,7 +626,7 @@ class Orchestrator:
                         "multi_select": multi_select,
                         "answered": False,
                     }
-                    events.append({"event": "card", "data": card_data})
+                    yield {"event": "card", "data": card_data}
                     paused_for_card = True
 
                 # B. ASK USER QUESTION CARD (PAUSES LOOP)
@@ -506,7 +640,7 @@ class Orchestrator:
                         "options": fn_args.get("options", []),
                         "answered": False,
                     }
-                    events.append({"event": "card", "data": card_data})
+                    yield {"event": "card", "data": card_data}
                     paused_for_card = True
 
                 # C. WRITE CONFIRM CARD (PAUSES LOOP)
@@ -525,7 +659,7 @@ class Orchestrator:
                         "reason": reason,
                         "expires_at": tok_dict["expires_at"],
                     }
-                    events.append({"event": "card", "data": card_data})
+                    yield {"event": "card", "data": card_data}
                     paused_for_card = True
 
                 # D. CREATE VISUAL (MAKER SUBAGENT LOOP)
@@ -533,14 +667,13 @@ class Orchestrator:
                     kind = fn_args.get("kind", "mermaid")
                     slug = fn_args.get("slug", "diagram")
                     brief = fn_args.get("brief", "")
-                    self._start_visual_maker(
+                    yield self._start_visual_maker(
                         session=session,
                         thread_id=thread_id,
                         call_id=call_id,
                         kind=kind,
                         slug=slug,
                         brief=brief,
-                        events=events,
                     )
                     # Tool completes or requests browser render
                     paused_for_card = True
@@ -550,16 +683,18 @@ class Orchestrator:
                     q = fn_args.get("query", "")
                     sub = fn_args.get("subject")
                     ext = fn_args.get("ext")
-                    lim = int(fn_args.get("limit", 10))
+                    lim = _clamp_int(fn_args.get("limit", 10), 1, 25)
                     res = lms_bridge.search_files(session, self.db, q, subject=sub, ext=ext, limit=lim)
-                    self._append_tool_result(llm_messages, thread_id, call_id, res, events, fn_name)
+                    yield self._append_tool_result(
+                        llm_messages, thread_id, call_id, _slim_file_rows(res), fn_name
+                    )
 
                 # F. BROWSE LMS FOLDER
                 elif fn_name == "browse_lms_folder":
                     cid = fn_args.get("course_id")
                     fid = fn_args.get("folder_id")
                     res = lms_bridge.browse_lms_folder(session, self.db, course_id=cid, folder_id=fid)
-                    self._append_tool_result(llm_messages, thread_id, call_id, res, events, fn_name)
+                    yield self._append_tool_result(llm_messages, thread_id, call_id, res, fn_name)
 
                 # G. SEARCH IB RESOURCES
                 elif fn_name == "search_ib_resources":
@@ -568,7 +703,7 @@ class Orchestrator:
                     lvl = fn_args.get("level")
                     yr = fn_args.get("year")
                     sess_term = fn_args.get("session")
-                    lim = int(fn_args.get("limit", 8))
+                    lim = _clamp_int(fn_args.get("limit", 8), 1, 25)
                     res = ib_client.search_ib(
                         q=q,
                         rtype=rtype,
@@ -578,7 +713,7 @@ class Orchestrator:
                         limit=lim,
                         pair_markschemes=True,
                     )
-                    self._append_tool_result(llm_messages, thread_id, call_id, res, events, fn_name)
+                    yield self._append_tool_result(llm_messages, thread_id, call_id, res, fn_name)
 
                 # H. SELECT AND ATTACH FILES
                 elif fn_name == "select_and_attach_files":
@@ -595,8 +730,13 @@ class Orchestrator:
                                 filename=f_meta.get("filename", ""),
                                 attached_by="agent",
                             )
-                            attached.append(f_meta)
-                            events.append({
+                            attached.append({
+                                "ref": r,
+                                "sha256": f_meta["sha256"],
+                                "filename": f_meta.get("filename", ""),
+                                "page_count": f_meta.get("page_count", 1),
+                            })
+                            yield {
                                 "event": "file_attached",
                                 "data": {
                                     "ref": r,
@@ -604,31 +744,33 @@ class Orchestrator:
                                     "filename": f_meta.get("filename", ""),
                                     "page_count": f_meta.get("page_count", 1),
                                 },
-                            })
+                            }
                         except Exception as e:
                             pass
-                    self._append_tool_result(llm_messages, thread_id, call_id, {"attached": attached}, events, fn_name)
+                    yield self._append_tool_result(
+                        llm_messages, thread_id, call_id, {"attached": attached}, fn_name
+                    )
 
                 # I. READ DOCUMENT
                 elif fn_name == "read_document":
                     ref = fn_args.get("ref", "")
                     pgs = fn_args.get("pages", "1-5")
                     res = file_reader.read_document(self.db, session.owner, ref, pages=pgs, session=session)
-                    self._append_tool_result(llm_messages, thread_id, call_id, res, events, fn_name)
+                    yield self._append_tool_result(llm_messages, thread_id, call_id, res, fn_name)
 
                 # J. SEARCH WITHIN DOCUMENT
                 elif fn_name == "search_within_document":
                     ref = fn_args.get("ref", "")
                     q = fn_args.get("query", "")
-                    top_k = int(fn_args.get("top_k", 5))
+                    top_k = _clamp_int(fn_args.get("top_k", 5), 1, 25)
                     res = file_reader.search_within_document(self.db, session.owner, ref, q, top_k=top_k, session=session)
-                    self._append_tool_result(llm_messages, thread_id, call_id, res, events, fn_name)
+                    yield self._append_tool_result(llm_messages, thread_id, call_id, res, fn_name)
 
                 # K. INSPECT DOCUMENT PAGES (MULTIMODAL)
                 elif fn_name == "inspect_document_pages":
                     ref = fn_args.get("ref", "")
                     pgs = fn_args.get("pages", [1])
-                    dpi = int(fn_args.get("dpi", 150))
+                    dpi = _clamp_int(fn_args.get("dpi", 150), 72, 220)
                     renders = file_reader.inspect_document_pages(self.db, session.owner, ref, pages=pgs, dpi=dpi, session=session)
                     # Format as multimodal tool response
                     tool_content: list[dict[str, Any]] = [
@@ -647,26 +789,29 @@ class Orchestrator:
                         tool_call_id=call_id,
                     )
                     llm_messages.append({"role": "tool", "content": tool_content, "tool_call_id": call_id})
-                    events.append({
+                    yield {
                         "event": "tool_done",
                         "data": {"call_id": call_id, "rendered_count": len(renders)},
-                    })
+                    }
 
                 # L. RESEARCH TOPIC
                 elif fn_name == "research_topic":
                     q = fn_args.get("query", "")
                     findings = research.web_search(q, max_results=4)
-                    self._append_tool_result(llm_messages, thread_id, call_id, {"search_results": findings}, events, fn_name)
+                    yield self._append_tool_result(
+                        llm_messages, thread_id, call_id, {"search_results": findings}, fn_name
+                    )
 
                 else:
-                    self._append_tool_result(llm_messages, thread_id, call_id, {"error": f"Unknown tool: {fn_name}"}, events, fn_name)
+                    yield self._append_tool_result(
+                        llm_messages, thread_id, call_id, {"error": f"Unknown tool: {fn_name}"}, fn_name
+                    )
 
             if paused_for_card:
                 # Stop turn and wait for user card interaction
                 break
 
-        events.append({"event": "done", "data": {"thread_id": thread_id}})
-        return events
+        yield {"event": "done", "data": {"thread_id": thread_id}}
 
     def _append_tool_result(
         self,
@@ -674,9 +819,9 @@ class Orchestrator:
         thread_id: str,
         call_id: str,
         result: Any,
-        events: list[dict[str, Any]],
         tool_name: str,
-    ) -> None:
+    ) -> dict[str, Any]:
+        """Record a tool result in the thread and return the event to emit."""
         res_str = json.dumps(result, default=str)
         self.db.add_message(
             thread_id=thread_id,
@@ -685,10 +830,10 @@ class Orchestrator:
             tool_call_id=call_id,
         )
         llm_messages.append({"role": "tool", "content": res_str, "tool_call_id": call_id})
-        events.append({
+        return {
             "event": "tool_done",
             "data": {"tool_name": tool_name, "call_id": call_id, "result": result},
-        })
+        }
 
     def _start_visual_maker(
         self,
@@ -698,12 +843,11 @@ class Orchestrator:
         kind: str,
         slug: str,
         brief: str,
-        events: list[dict[str, Any]],
-    ) -> None:
+    ) -> dict[str, Any]:
         """Call specialist maker subagent to generate initial diagram source code,
         then emit viz_render_request to browser for DOM validation and PNG rasterization."""
         cfg = config.get_llm_config()
-        maker_model = cfg.get("maker_model", "google/gemini-2.5-flash")
+        maker_model = cfg.get("maker_model", "agy/gemini-3.8-flash-high")
 
         system_prompt = prompts.MERMAID_MAKER_PROMPT if kind == "mermaid" else prompts.SVG_MAKER_PROMPT
         maker_msgs = [
@@ -734,7 +878,7 @@ class Orchestrator:
         }
 
         # Ask browser to validate DOM & rasterize
-        events.append({
+        return {
             "event": "viz_render_request",
             "data": {
                 "call_id": call_id,
@@ -742,7 +886,7 @@ class Orchestrator:
                 "slug": slug,
                 "source": source_code,
             },
-        })
+        }
 
     def submit_card_reply(
         self,
@@ -752,14 +896,27 @@ class Orchestrator:
         reply_data: dict[str, Any],
     ) -> dict[str, Any]:
         """Submit answer to QuizCard, AskCard, or WriteConfirmCard, and resume teacher loop."""
+        # The thread id arrives from the browser, so confirm the caller owns it
+        # before writing anything into the conversation.
+        if self.db.get_thread(session.owner, thread_id) is None:
+            raise PermissionError("Unknown lesson thread.")
+
         # 1. QUIZ CARD SUBMISSION
-        quiz = self.db.get_quiz_state(card_id)
+        quiz = self.db.get_quiz_state(card_id, owner=session.owner)
         if quiz:
             selected = reply_data.get("selected")
             sel_list = selected if isinstance(selected, list) else [selected]
 
+            try:
+                correct_indices = json.loads(quiz.get("correct_json") or "[]")
+            except (TypeError, ValueError):
+                correct_indices = []
+            if not isinstance(correct_indices, list):
+                correct_indices = [correct_indices]
+            correct_indices = [int(i) for i in correct_indices if str(i).lstrip("-").isdigit()]
+
             is_dont_know = sel_list == [0] or sel_list == ["__dont_know__"]
-            correct_set = set(quiz.get("correct_answer") or [])
+            correct_set = set(correct_indices)
 
             is_correct = False
             if not is_dont_know:
@@ -768,12 +925,13 @@ class Orchestrator:
             grade_result = {
                 "correct": is_correct,
                 "dontKnow": is_dont_know,
-                "correct_options": quiz.get("correct_answer"),
+                "correct_options": correct_indices,
                 "explanation": quiz.get("explanation"),
             }
 
             self.db.record_quiz_answer(
                 call_id=card_id,
+                owner=session.owner,
                 user_answer=sel_list,
                 grade_result=grade_result,
             )
@@ -784,7 +942,7 @@ class Orchestrator:
                 "correct": is_correct,
                 "dontKnow": is_dont_know,
                 "selected": sel_list,
-                "correct_indices": quiz.get("correct_answer"),
+                "correct_indices": correct_indices,
                 "explanation": quiz.get("explanation"),
             }
             self.db.add_message(
@@ -843,6 +1001,8 @@ class Orchestrator:
         pending = self._pending_viz.get(call_id)
         if not pending:
             return {"status": "error", "message": "Unknown visual call_id."}
+        if pending.get("owner") != session.owner:
+            return {"status": "error", "message": "Unknown visual call_id."}
 
         ok = feedback.get("ok", True)
         dom_warnings = feedback.get("dom_warnings", [])
@@ -867,7 +1027,16 @@ class Orchestrator:
                 try:
                     b64_raw = png_data_url.split(",", 1)[1]
                     png_bytes = base64.b64decode(b64_raw)
-                    p_file = viz_dir / f"{slug}-{viz_id[:8]}.png"
+                    # The slug comes from the model. A crafted value like
+                    # "../../.." would otherwise write outside data/.
+                    safe_slug = sanitize_filename(slug)[:60] or "diagram"
+                    if not png_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+                        raise ValueError("not a PNG")
+                    if len(png_bytes) > 8 * 1024 * 1024:
+                        raise ValueError("PNG too large")
+                    p_file = viz_dir / f"{safe_slug}-{viz_id[:8]}.png"
+                    if p_file.resolve().parent != viz_dir.resolve():
+                        raise ValueError("path escapes the visual directory")
                     p_file.write_bytes(png_bytes)
                     png_path = str(p_file)
                 except Exception:

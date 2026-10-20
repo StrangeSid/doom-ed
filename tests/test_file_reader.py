@@ -182,14 +182,16 @@ def test_per_owner_acl_enforcement(test_db):
     assert doc_a["sha256"] == sha
     assert len(doc_a["pages"]) == 2
 
-    # Student B MUST be blocked with PermissionError
-    with pytest.raises(PermissionError):
+    # Student B MUST be blocked. A ref lookup is owner-scoped, so the ref is
+    # simply unknown to student B (404), while a bare sha256 resolves to the
+    # file record and is then refused by the ACL check (403).
+    with pytest.raises((PermissionError, FileNotFoundError)):
         get_file_bytes(test_db, owner_b, "lms://resource/50/60")
 
     with pytest.raises(PermissionError):
         get_file_bytes(test_db, owner_b, sha)
 
-    with pytest.raises(PermissionError):
+    with pytest.raises((PermissionError, FileNotFoundError)):
         read_document(test_db, owner_b, sha)
 
 

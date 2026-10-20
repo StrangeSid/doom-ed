@@ -365,21 +365,26 @@ class WriteConfirmationManager:
             if record["owner"] != owner_clean:
                 # Do not allow cross-owner probing; leave or reject without returning data
                 return None
+
+            # Validate before consuming. A token that fails its signature check
+            # must not be destroyed, or a forged attempt would silently
+            # invalidate the student's real confirmation.
+            if now > record["expires_at"]:
+                self._tokens.pop(tid_clean, None)
+                return None
+
+            expected_sig = self._sign(
+                record["nonce"],
+                record["owner"],
+                record["action"],
+                record["payload_hash"],
+                record["expires_at"],
+            )
+            if not hmac.compare_digest(record["sig"], expected_sig):
+                return None
+
             # Atomically remove token so it can never be reused
             self._tokens.pop(tid_clean, None)
-
-        if now > record["expires_at"]:
-            return None
-
-        expected_sig = self._sign(
-            record["nonce"],
-            record["owner"],
-            record["action"],
-            record["payload_hash"],
-            record["expires_at"],
-        )
-        if not hmac.compare_digest(record["sig"], expected_sig):
-            return None
 
         return {
             "token_id": record["token_id"],

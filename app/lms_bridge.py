@@ -431,13 +431,30 @@ def fetch_student_payload(
 
         return results
 
-    payload, _ = cache.get_or_build(
-        session.sid,
-        _builder,
-        refresh=refresh,
-        tenant=session.tenant,
-        uid=session.uid,
-    )
+    entry = cache.get_entry(session.sid, tenant=session.tenant, uid=session.uid)
+    try:
+        payload, _ = cache.get_or_build(
+            session.sid,
+            _builder,
+            refresh=refresh,
+            tenant=session.tenant,
+            uid=session.uid,
+        )
+    except LMSNotAuthenticatedError as e:
+        # The Indus token expired. The last known payload is still the
+        # student's own data and far more useful than an empty page, so serve
+        # it and flag the auth problem. The caller surfaces the flag.
+        stale = cache.get_payload(
+            entry,
+            allow_stale=True,
+            tenant=session.tenant,
+            uid=session.uid,
+        )
+        if stale is None:
+            raise
+        stale = dict(stale)
+        stale["_auth_error"] = str(e)
+        return stale
     return payload
 
 
@@ -684,7 +701,8 @@ def build_study_triage(
     entry = cache.get_entry(session.sid, tenant=session.tenant, uid=session.uid)
 
     def _triage_calc() -> dict[str, Any]:
-        payload = fetch_student_payload(session, store=store, refresh=False)
+        payload = fetch_student_payload(session, store=store, refresh=refresh)
+        auth_error = payload.pop("_auth_error", None)
         now_ts = time.time()
         one_day = 86400
         two_days = 172800
@@ -733,6 +751,18 @@ def build_study_triage(
             total = e.get("total")
             eid = str(e.get("id") or "")
             if e.get("submitted") and score is not None and total is not None and score < total and eid:
+                # Defence in depth: the shape layer marks a test submitted, but
+                # the status is re-checked here so a live test can never reach
+                # the question detail path.
+                try:
+                    assert_not_live_test(
+                        item_status=e.get("status"),
+                        submitted=True,
+                        has_result=True,
+                    )
+                except PermissionError:
+                    continue
+
                 wrong_qs: list[dict[str, Any]] = []
                 try:
                     res = call_lms(session, store, lms.eol_result, session.tenant, eid, session.uid)
@@ -817,12 +847,15 @@ def build_study_triage(
 
         before_break.sort(key=lambda x: x["due_ts"])
 
-        return {
+        result = {
             "now": now_section,
             "weak_topics": weak_topics,
             "before_break": before_break,
             "computed_at": time.time(),
         }
+        if auth_error:
+            result["_auth_error"] = auth_error
+        return result
 
     return cache.memo(entry, "study_triage", _triage_calc, ttl=300, refresh=refresh)
 

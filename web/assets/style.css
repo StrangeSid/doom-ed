@@ -629,6 +629,25 @@ img, svg, video { max-width: 100%; }
 .thread-delete:hover { color: #f5a9a4; background: rgba(224, 106, 99, 0.14); }
 
 /* -------------------------------------------------------------- chat header */
+.reauth-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px clamp(14px, 2.4vw, 26px);
+  border-bottom: 1px solid rgba(232, 163, 61, 0.35);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 13px; font-weight: 650;
+}
+.reauth-banner[hidden] { display: none; }
+.reauth-banner svg { width: 17px; height: 17px; flex: none; }
+.reauth-banner span { flex: 1; min-width: 0; }
+.reauth-banner .btn {
+  flex: none;
+  background: var(--accent);
+  color: #2a1c05;
+  border-color: transparent;
+}
+.reauth-banner .btn:hover { background: var(--accent-ink); color: #fff; }
+
 .chat-header {
   display: flex; align-items: center; gap: 12px;
   min-height: 64px;

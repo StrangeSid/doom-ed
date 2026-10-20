@@ -23,6 +23,25 @@ let isStreaming = false;
 // --- DOM References ----------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 
+// --- Safe DOM helpers --------------------------------------------------------
+// LMS data and model output are untrusted. Never interpolate them into HTML:
+// build nodes and assign textContent instead.
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function makeElement(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
+
 const appShell = document.querySelector(".app-shell");
 const leftPane = $("left-pane");
 const leftToggle = $("left-toggle");
@@ -64,6 +83,10 @@ const profSubjects = $("prof-subjects");
 
 const countFix = $("count-fix");
 const fixList = $("fix-list");
+
+const reauthBanner = $("reauth-banner");
+const reauthMessage = $("reauth-message");
+const reauthBtn = $("reauth-btn");
 
 const breakWindow = $("break-window");
 const breakQueue = $("break-queue");
@@ -210,6 +233,33 @@ function showToast(message, type = "info") {
 }
 
 // --- Auth Flow ---------------------------------------------------------------
+
+/**
+ * Show the re-authentication banner.
+ *
+ * The Indus LMS token can expire while doom-ed is open. The last known
+ * payload is still on screen, but it is not live. The banner stays up until
+ * the student signs in again, so stale numbers are never mistaken for
+ * current ones.
+ */
+function promptReauth(message) {
+  if (!reauthBanner) return;
+  if (reauthMessage) reauthMessage.textContent = message;
+  reauthBanner.hidden = false;
+  if (loginTrigger) loginTrigger.hidden = true;
+}
+
+function clearReauthPrompt() {
+  if (reauthBanner) reauthBanner.hidden = true;
+}
+
+if (reauthBtn) {
+  reauthBtn.addEventListener("click", () => {
+    loginError.hidden = true;
+    loginModal.showModal();
+  });
+}
+
 async function checkAuth() {
   try {
     const res = await fetch("/api/session");
@@ -217,6 +267,9 @@ async function checkAuth() {
       const data = await res.json();
       currentSession = data.student;
       renderProfile();
+      if (data.profile_error) {
+        promptReauth(data.profile_error);
+      }
       loadTriage();
       loadThreads();
     } else {
@@ -279,6 +332,7 @@ loginForm.addEventListener("submit", async (e) => {
     currentSession = data.student;
     renderProfile();
     loginModal.close();
+    clearReauthPrompt();
     loadTriage();
     loadThreads();
     showToast(`Signed in as ${currentSession.name}`, "success");
@@ -293,7 +347,21 @@ async function loadTriage(refresh = false) {
   if (!currentSession) return;
   try {
     const res = await fetch(`/api/study?refresh=${refresh}`);
-    if (!res.ok) return;
+    if (res.status === 401) {
+      promptReauth("Your Indus LMS session expired. Sign in again to load your assignments.");
+      return;
+    }
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const err = await res.json();
+        detail = err.detail || detail;
+      } catch (e) {
+        /* non-JSON error body */
+      }
+      showToast(`Could not load your assignments: ${detail}`, "error");
+      return;
+    }
     const json = await res.json();
     const data = json.data;
     if (!data) return;
@@ -301,8 +369,15 @@ async function loadTriage(refresh = false) {
     renderTriageNow(data.now);
     renderTriageWeak(data.weak_topics);
     renderTriageBreak(data.before_break);
+
+    if (json.auth_error) {
+      promptReauth(json.auth_error);
+    } else {
+      clearReauthPrompt();
+    }
   } catch (e) {
     console.warn("Triage load error:", e);
+    showToast("Could not reach the study server.", "error");
   }
 }
 
@@ -340,96 +415,103 @@ function renderTriageNow(now) {
     countNow.hidden = true;
   }
 
-  listOverdue.innerHTML = overdue
-    .map(
-      (item) =>
-        `<li><span class="item-title">${item.title || "Untitled"}</span><span class="item-sub">${item.subject || ""}</span></li>`
-    )
-    .join("");
+  const renderNowItem = (title, subject) => {
+    const li = document.createElement("li");
+    li.appendChild(makeElement("span", "item-title", title || "Untitled"));
+    if (subject !== undefined) {
+      li.appendChild(makeElement("span", "item-sub", subject || ""));
+    }
+    return li;
+  };
 
-  listDueSoon.innerHTML = dueSoon
-    .map(
-      (item) =>
-        `<li><span class="item-title">${item.title || "Untitled"}</span><span class="item-sub">${item.subject || ""}</span></li>`
-    )
-    .join("");
+  listOverdue.replaceChildren(
+    ...overdue.map((item) => renderNowItem(item.title, item.subject))
+  );
 
-  listCalendarToday.innerHTML = cal
-    .map(
-      (ev) =>
-        `<li><span class="item-title">${ev.title || ev.label || "Event"}</span></li>`
-    )
-    .join("");
+  listDueSoon.replaceChildren(
+    ...dueSoon.map((item) => renderNowItem(item.title, item.subject))
+  );
 
-  listUnreadNotifs.innerHTML = notifs
-    .map(
-      (n) =>
-        `<li><span class="item-title">${n.title || n.message || "Notice"}</span></li>`
-    )
-    .join("");
+  listCalendarToday.replaceChildren(
+    ...cal.map((ev) => renderNowItem(ev.title || ev.label || "Event"))
+  );
+
+  listUnreadNotifs.replaceChildren(
+    ...notifs.map((n) => renderNowItem(n.title || n.message || "Notice"))
+  );
 }
 
 function renderTriageWeak(weakTopics) {
   if (!weakTopics || !weakTopics.length) {
-    fixList.innerHTML = `<li class="empty-list-note">No active weak topics recorded. Great job!</li>`;
+    fixList.replaceChildren(
+      makeElement("li", "empty-list-note", "No active weak topics recorded. Great job!")
+    );
     countFix.hidden = true;
     return;
   }
   countFix.hidden = false;
   countFix.textContent = weakTopics.length;
 
-  fixList.innerHTML = weakTopics
-    .map((item) => {
-      const wrongCount = item.wrong_questions ? item.wrong_questions.length : 0;
-      return `
-      <li class="fix-item">
-        <div class="fix-head">
-          <span class="fix-subject">${item.subject || "Subject"}</span>
-          <span class="fix-score">${item.score_label || ""}</span>
-        </div>
-        <b class="fix-title">${item.topic || item.title}</b>
-        <p class="fix-reason">${item.why_weak || ""}</p>
-        <div class="fix-actions">
-          <button class="btn sm" data-teach-topic="${item.topic}" data-teach-subj="${item.subject}">Teach from root</button>
-          <button class="btn ghost sm" data-practise-topic="${item.topic}" data-practise-subj="${item.subject}">Practise IB</button>
-        </div>
-      </li>
-    `;
+  fixList.replaceChildren(
+    ...weakTopics.map((item) => {
+      const li = makeElement("li", "fix-item");
+
+      const head = makeElement("div", "fix-head");
+      head.append(
+        makeElement("span", "fix-subject", item.subject || "Subject"),
+        makeElement("span", "fix-score", item.score_label || "")
+      );
+
+      const actions = makeElement("div", "fix-actions");
+
+      const teachBtn = makeElement("button", "btn sm", "Teach from root");
+      teachBtn.type = "button";
+      teachBtn.dataset.teachTopic = item.topic ?? "";
+      teachBtn.dataset.teachSubj = item.subject ?? "";
+      teachBtn.addEventListener("click", () => {
+        const topic = teachBtn.dataset.teachTopic;
+        startNewLessonWithPrompt(`Teach me ${topic} from foundations up. Probe my understanding first.`);
+      });
+
+      const practiseBtn = makeElement("button", "btn ghost sm", "Practise IB");
+      practiseBtn.type = "button";
+      practiseBtn.dataset.practiseTopic = item.topic ?? "";
+      practiseBtn.dataset.practiseSubj = item.subject ?? "";
+      practiseBtn.addEventListener("click", () => {
+        const topic = practiseBtn.dataset.practiseTopic;
+        startNewLessonWithPrompt(`Find IB past paper questions on ${topic} and give me a practice problem.`);
+      });
+
+      actions.append(teachBtn, practiseBtn);
+      li.append(
+        head,
+        makeElement("b", "fix-title", item.topic || item.title || ""),
+        makeElement("p", "fix-reason", item.why_weak || ""),
+        actions
+      );
+      return li;
     })
-    .join("");
-
-  // Attach click handlers
-  fixList.querySelectorAll("[data-teach-topic]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const topic = btn.dataset.teachTopic;
-      const subj = btn.dataset.teachSubj;
-      startNewLessonWithPrompt(`Teach me ${topic} from foundations up. Probe my understanding first.`);
-    });
-  });
-
-  fixList.querySelectorAll("[data-practise-topic]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const topic = btn.dataset.practiseTopic;
-      startNewLessonWithPrompt(`Find IB past paper questions on ${topic} and give me a practice problem.`);
-    });
-  });
+  );
 }
 
 function renderTriageBreak(queue) {
   if (!queue || !queue.length) {
-    breakQueue.innerHTML = `<li class="empty-list-note">Nothing due before break.</li>`;
+    breakQueue.replaceChildren(
+      makeElement("li", "empty-list-note", "Nothing due before break.")
+    );
     return;
   }
-  breakQueue.innerHTML = queue
-    .map(
-      (item) => `
-      <li>
-        <span class="queue-title">${item.title}</span>
-        <span class="queue-meta">${item.subject} · due ${item.due ? item.due.slice(0, 10) : "soon"}</span>
-      </li>
-    `
-    )
-    .join("");
+  breakQueue.replaceChildren(
+    ...queue.map((item) => {
+      const li = document.createElement("li");
+      const due = item.due ? String(item.due).slice(0, 10) : "soon";
+      li.append(
+        makeElement("span", "queue-title", item.title),
+        makeElement("span", "queue-meta", `${item.subject || ""} · due ${due}`)
+      );
+      return li;
+    })
+  );
 }
 
 refreshTriageBtn.addEventListener("click", () => loadTriage(true));
@@ -449,23 +531,26 @@ async function loadThreads() {
 
 function renderThreads(threads) {
   if (!threads.length) {
-    threadList.innerHTML = `<li class="empty-list-note">No previous lessons.</li>`;
+    threadList.replaceChildren(
+      makeElement("li", "empty-list-note", "No previous lessons.")
+    );
     return;
   }
-  threadList.innerHTML = threads
-    .map(
-      (t) => `
-      <li class="thread-item ${t.id === currentThreadId ? "active" : ""}" data-thread-id="${t.id}">
-        <span class="thread-item-title">${t.title || "Lesson"}</span>
-        <span class="thread-item-phase">${t.phase || "probe"}</span>
-      </li>
-    `
-    )
-    .join("");
-
-  threadList.querySelectorAll("[data-thread-id]").forEach((el) => {
-    el.addEventListener("click", () => switchThread(el.dataset.threadId));
-  });
+  threadList.replaceChildren(
+    ...threads.map((t) => {
+      const li = makeElement(
+        "li",
+        `thread-item ${t.id === currentThreadId ? "active" : ""}`
+      );
+      li.dataset.threadId = t.id ?? "";
+      li.append(
+        makeElement("span", "thread-item-title", t.title || "Lesson"),
+        makeElement("span", "thread-item-phase", t.phase || "probe")
+      );
+      li.addEventListener("click", () => switchThread(li.dataset.threadId));
+      return li;
+    })
+  );
 }
 
 async function switchThread(threadId) {
@@ -536,10 +621,6 @@ const DOC_ICON_SVG =
   '<path d="M14 3H7.6A2.6 2.6 0 0 0 5 5.6v12.8A2.6 2.6 0 0 0 7.6 21h8.8a2.6 2.6 0 0 0 2.6-2.6V8z"/>' +
   '<path d="M14 3v5h5"/></svg>';
 
-function escapeText(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
-}
-
 function renderAttachedFiles(attachments) {
   attachedTray.innerHTML = "";
   if (!attachments || !attachments.length) return;
@@ -547,8 +628,10 @@ function renderAttachedFiles(attachments) {
     const chip = document.createElement("button");
     chip.className = "file-chip";
     chip.type = "button";
-    chip.title = att.filename;
-    chip.innerHTML = `<span class="chip-icon">${DOC_ICON_SVG}</span><span class="chip-name">${escapeText(att.filename)}</span>`;
+    chip.title = att.filename ?? "";
+    const icon = makeElement("span", "chip-icon");
+    icon.innerHTML = DOC_ICON_SVG; // static, trusted glyph markup
+    chip.append(icon, makeElement("span", "chip-name", att.filename ?? ""));
     chip.addEventListener("click", () => {
       openViewer({
         sha256: att.sha256,
@@ -586,7 +669,9 @@ function renderMessages(messages) {
 function appendUserMessageBubble(text) {
   const div = document.createElement("div");
   div.className = "msg-row msg-user";
-  div.innerHTML = `<div class="msg-bubble user-bubble prose">${renderMarkdown(text)}</div>`;
+  const bubble = makeElement("div", "msg-bubble user-bubble prose");
+  bubble.innerHTML = renderMarkdown(text); // sanitized markdown output
+  div.appendChild(bubble);
   messageList.appendChild(div);
   messageList.scrollTop = messageList.scrollHeight;
 }
@@ -594,10 +679,12 @@ function appendUserMessageBubble(text) {
 function appendAssistantMessageBubble(text = "") {
   const div = document.createElement("div");
   div.className = "msg-row msg-assistant";
-  div.innerHTML = `<div class="msg-bubble assistant-bubble prose">${renderMarkdown(text)}</div>`;
+  const bubble = makeElement("div", "msg-bubble assistant-bubble prose");
+  bubble.innerHTML = renderMarkdown(text); // sanitized markdown output
+  div.appendChild(bubble);
   messageList.appendChild(div);
   messageList.scrollTop = messageList.scrollHeight;
-  return div.querySelector(".assistant-bubble");
+  return bubble;
 }
 
 // --- Send Message Loop with SSE ----------------------------------------------
@@ -659,13 +746,16 @@ async function sendMessage() {
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
-      const lines = buffer.split("\n\n");
-      buffer = lines.pop(); // keep remainder
+      // SSE frames are separated by a blank line. Normalise CRLF first so a
+      // server that emits \r\n\r\n does not produce one giant frame.
+      buffer = buffer.replace(/\r\n/g, "\n");
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop(); // keep remainder for the next chunk
 
-      for (const block of lines) {
+      for (const block of frames) {
         if (!block.trim()) continue;
-        const eventMatch = block.match(/event:\s*([^\n]+)/);
-        const dataMatch = block.match(/data:\s*([\s\S]+)/);
+        const eventMatch = block.match(/^event:\s*(.+)$/m);
+        const dataMatch = block.match(/^data:\s*([\s\S]*?)$/m);
         if (!eventMatch || !dataMatch) continue;
 
         const eventType = eventMatch[1].trim();
@@ -676,15 +766,22 @@ async function sendMessage() {
           continue;
         }
 
-        handleSSEEvent(eventType, eventData, assistantBubble, () => {
+        handleSSEEvent(eventType, eventData, assistantBubble, (chunk) => {
+          assistantText += chunk;
           assistantBubble.innerHTML = renderMarkdown(assistantText);
           messageList.scrollTop = messageList.scrollHeight;
         });
       }
     }
   } catch (err) {
-    showToast(err.message, "error");
-    assistantBubble.innerHTML += `<div class="callout callout-failure"><div class="callout-title">Connection Error</div><div class="callout-body">${err.message}</div></div>`;
+    const message = (err && err.message) || String(err || "Something went wrong.");
+    showToast(message, "error");
+    const callout = makeElement("div", "callout callout-failure");
+    callout.append(
+      makeElement("div", "callout-title", "Connection Error"),
+      makeElement("div", "callout-body", message)
+    );
+    assistantBubble.appendChild(callout);
   } finally {
     isStreaming = false;
     sendBtn.disabled = false;
@@ -695,10 +792,9 @@ async function sendMessage() {
   }
 }
 
-function handleSSEEvent(type, data, bubble, updateBubble) {
+function handleSSEEvent(type, data, bubble, onToken) {
   if (type === "token") {
-    bubble.innerHTML = renderMarkdown((bubble.dataset.rawText = (bubble.dataset.rawText || "") + data.content));
-    messageList.scrollTop = messageList.scrollHeight;
+    onToken(data.content || "");
   } else if (type === "card") {
     renderCardInChat(data);
   } else if (type === "file_attached") {
@@ -720,7 +816,10 @@ function showToolIndicator(name) {
   const ind = document.createElement("div");
   ind.id = "active-tool-ind";
   ind.className = "tool-indicator";
-  ind.innerHTML = `<span class="spinner"></span> Running ${name}...`;
+  ind.append(
+    makeElement("span", "spinner"),
+    document.createTextNode(` Running ${name ?? ""}...`)
+  );
   messageList.appendChild(ind);
   messageList.scrollTop = messageList.scrollHeight;
 }
@@ -915,14 +1014,20 @@ function renderPendingAttachments() {
   for (const att of pendingAttachments) {
     const chip = document.createElement("span");
     chip.className = "file-chip file-chip-pending pending";
-    chip.title = att.filename;
-    chip.innerHTML = `<span class="chip-icon">${DOC_ICON_SVG}</span><span class="chip-name">${escapeText(
-      att.filename
-    )}</span><button class="chip-rm" type="button" aria-label="Remove attachment">×</button>`;
-    chip.querySelector(".chip-rm").addEventListener("click", () => {
+    chip.title = att.filename ?? "";
+
+    const icon = makeElement("span", "chip-icon");
+    icon.innerHTML = DOC_ICON_SVG; // static, trusted glyph markup
+    const name = makeElement("span", "chip-name", att.filename ?? "");
+    const remove = makeElement("button", "chip-rm", "×");
+    remove.type = "button";
+    remove.setAttribute("aria-label", "Remove attachment");
+    remove.addEventListener("click", () => {
       pendingAttachments = pendingAttachments.filter((a) => a !== att);
       renderPendingAttachments();
     });
+
+    chip.append(icon, name, remove);
     composerAttachments.appendChild(chip);
   }
 }
@@ -1004,9 +1109,13 @@ function openProfileModal() {
   if (profSubjects) {
     const subjs = currentSession.subjects || [];
     if (Array.isArray(subjs) && subjs.length) {
-      profSubjects.innerHTML = subjs.map((s) => `<span class="prof-subj-tag">${s}</span>`).join("");
+      profSubjects.replaceChildren(
+        ...subjs.map((s) => makeElement("span", "prof-subj-tag", s))
+      );
     } else {
-      profSubjects.innerHTML = `<span class="prof-subj-tag empty">No subjects listed</span>`;
+      profSubjects.replaceChildren(
+        makeElement("span", "prof-subj-tag empty", "No subjects listed")
+      );
     }
   }
   if (profileModal) profileModal.showModal();

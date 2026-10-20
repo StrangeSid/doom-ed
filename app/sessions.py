@@ -360,6 +360,12 @@ class SessionStore:
         """Store an L2 cache entry encrypted with Fernet at rest."""
         if not key:
             raise ValueError("Cache key must be non-empty")
+        self.set_cache_at(key, value_json, time.time())
+
+    def set_cache_at(self, key: str, value_json: str, updated_at: float) -> None:
+        """Store an L2 cache entry with an explicit timestamp."""
+        if not key:
+            raise ValueError("Cache key must be non-empty")
         enc_val = self._enc(value_json)
         with self._lock:
             self._db.execute(
@@ -367,7 +373,7 @@ class SessionStore:
                    ON CONFLICT(key) DO UPDATE SET
                        value = excluded.value,
                        updated_at = excluded.updated_at""",
-                (key, enc_val, time.time()),
+                (key, enc_val, float(updated_at)),
             )
             self._db.commit()
 
