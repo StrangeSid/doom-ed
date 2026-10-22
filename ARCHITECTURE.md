@@ -1,10 +1,10 @@
-# Architecture & Deployment · doom-ed
+# Architecture and deployment
 
-This document details the system design, security boundary, data isolation, and deployment blueprint for **doom-ed**.
+System design, security boundaries, data isolation, and deployment blueprint for **doom-ed**.
 
 ---
 
-## 1. System Architecture
+## 1. System architecture
 
 ```mermaid
 flowchart TB
@@ -58,7 +58,7 @@ flowchart TB
 
 ---
 
-## 2. Multi-Tenant Security & Storage Isolation
+## 2. Multi-tenant security and storage isolation
 
 1. **Owner Scoping (`tenant:uid`)**:
    - Students at the same school share an Indus LMS `tenant`, but have distinct `uid`.
@@ -91,7 +91,7 @@ flowchart TB
 
 ---
 
-## 2.1 Local-First Operation
+## 2.1 Local-first operation
 
 Doom-ed runs as a local application that points at remote services only for what it can't own.
 
@@ -113,9 +113,9 @@ A fully hosted version with real multi-user auth is a later milestone. The stora
 
 ---
 
-## 3. Deployment Blueprint
+## 3. Deployment blueprint
 
-### A. Main Backend & Web UI: Google Cloud Run (Free Tier Friendly)
+### A. Main backend and web UI: Google Cloud Run (free tier friendly)
 
 The main application container runs on **Google Cloud Run** behind Cloudflare.
 
@@ -162,7 +162,7 @@ On container start, `litestream restore -if-replica-exists` restores the databas
 
 ---
 
-### B. IB Resource Catalog Sidecar: Vercel Serverless (Free Tier)
+### B. IB resource catalog sidecar: Vercel serverless (free tier)
 
 The IB resource catalog (`ib-resource-scraping`) is hosted serverless at `https://ib-scrape.sidevv.xyz`:
 - Read-only search and facets over committed JSON manifests (`manifests/*.json`).
@@ -171,7 +171,7 @@ The IB resource catalog (`ib-resource-scraping`) is hosted serverless at `https:
 
 ---
 
-### C. LLM Integration & Routing
+### C. LLM integration and routing
 
 Doom-ed talks to any OpenAI-compatible endpoint. The current configuration points at a local OmniRoute proxy on `http://localhost:20128/v1` with `agy/gemini-3.8-flash-high` serving as teacher, maker, and researcher.
 

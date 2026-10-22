@@ -1,12 +1,12 @@
-# DOCS · doom-ed API & Tool Reference
+# API and tool reference
 
-Complete API and agent tool specifications for **doom-ed**.
+Reference documentation for the HTTP endpoints, agent tools, and event stream in **doom-ed**.
 
 ---
 
-## 1. HTTP API Endpoints
+## 1. HTTP endpoints
 
-### 1.1 Authentication & Sessions
+### 1.1 Authentication and sessions
 
 | Endpoint | Method | Body / Params | Description |
 |---|---|---|---|
@@ -16,15 +16,15 @@ Complete API and agent tool specifications for **doom-ed**.
 
 ---
 
-### 1.2 Study Coach Triage
+### 1.2 Study coach triage
 
 | Endpoint | Method | Body / Params | Description |
 |---|---|---|---|
-| `/api/study` | `GET` | `refresh=true` (optional) | Returns 3-question student triage: `now` (overdue, due soon, calendar today, unread notices, attendance), `weak_topics` (fix list with scores & wrong questions), and `before_break` (upcoming load queue). |
+| `/api/study` | `GET` | `refresh=true` (optional) | Returns 3-question student triage: `now` (overdue, due soon, calendar today, unread notices), `weak_topics` (fix list with scores & wrong questions), and `before_break` (upcoming load queue). |
 
 ---
 
-### 1.3 Chat & Pedagogy Sessions
+### 1.3 Chat and pedagogy sessions
 
 | Endpoint | Method | Body / Params | Description |
 |---|---|---|---|
@@ -38,7 +38,7 @@ Complete API and agent tool specifications for **doom-ed**.
 
 ---
 
-### 1.4 Files, Viewer & Blobs
+### 1.4 Files, viewer and blobs
 
 | Endpoint | Method | Body / Params | Description |
 |---|---|---|---|
@@ -48,7 +48,7 @@ Complete API and agent tool specifications for **doom-ed**.
 
 ---
 
-### 1.5 IB Resource Catalog Proxy
+### 1.5 IB resource catalog proxy
 
 | Endpoint | Method | Body / Params | Description |
 |---|---|---|---|
@@ -58,7 +58,7 @@ Complete API and agent tool specifications for **doom-ed**.
 
 ---
 
-### 1.6 Runtime Settings
+### 1.6 Runtime settings
 
 Model routing is server-side configuration. The browser never sends a provider or a key, and the API key never leaves the server.
 
@@ -69,7 +69,7 @@ Model routing is server-side configuration. The browser never sends a provider o
 
 ---
 
-## 1.7 Health & Error Semantics
+## 1.7 Health and error semantics
 
 | Endpoint | Method | Description |
 |---|---|---|
@@ -87,7 +87,7 @@ Error codes the browser handles:
 
 ---
 
-## 1.8 Expired Indus Token
+## 1.8 Expired Indus token
 
 The Indus LMS access token expires on its own schedule, independently of the doom-ed session. When that happens:
 
@@ -98,7 +98,7 @@ The Indus LMS access token expires on its own schedule, independently of the doo
 
 ---
 
-## 1.9 SSE Event Stream
+## 1.9 SSE event stream
 
 `POST /api/chat/send` returns `text/event-stream`. Frames are separated by a blank line.
 
@@ -117,7 +117,7 @@ The Indus LMS access token expires on its own schedule, independently of the doo
 
 ---
 
-## 2. Agent Tool Reference
+## 2. Agent tool reference
 
 The teacher agent has 12 specialized tools:
 
@@ -134,7 +134,7 @@ The teacher agent has 12 specialized tools:
 11. **`research_topic`**: Web search and fetch tool for the researcher subagent and fact verification.
 12. **`confirm_lms_write`**: Emits an interactive `<WriteConfirmCard>` requiring student confirmation before modifying school data.
 
-### 2.1 Loop Guards
+### 2.1 Loop guards
 
 The agent takes at most 12 autonomous tool turns per user message. Two guards keep it from stalling:
 

@@ -130,7 +130,7 @@ flowchart TB
 - **L1 In-Process Cache (Fast Path)**:
   - Per-student `_Entry` with singleflight locks (`lock`, `crawl_lock`, `revalidate_lock`) so parallel chat tool calls and UI refreshes share one upstream LMS fetch.
   - **Mixed TTLs**:
-    - `DATA_TTL = 300s`: Courses, EOL list, FA/SA assessments, learning tasks, attendance, calendar, notifications.
+    - `DATA_TTL = 300s`: Courses, EOL list, FA/SA assessments, learning tasks, calendar, notifications.
     - `FILES_TTL = 3600s`: Recursive course folder crawl (`list_resources` + `resource_children`), executed in a background singleflight worker so chat/dashboard loads never block on deep folder trees.
     - `DETAIL_TTL = 300s`: Individual graded EOL results, FA rubric/submission details, and `/api/study` triage output.
 - **L2 Persistent Encrypted Cache (Warm Restart)**:
@@ -185,7 +185,7 @@ flowchart TB
 
 1. **Triage Briefing (`/api/study`)**:
    - Computes from live LMS data:
-     - **Now**: Overdue → due today/tomorrow → today's calendar → unread notifications → today's attendance.
+     - **Now**: Overdue → due today/tomorrow → today's calendar → unread notifications.
      - **Weak at**: Wrong answers from graded EOL tests (`lms.eol_detail`), lowest rubric rows from graded FA/SA assessments (`lms.fa_detail`), and teacher task feedback.
      - **Before next break**: Ordered work queue before the next calendar holiday/break.
 2. **3-Phase Teaching Loop (`app/prompts.py` + `app/orchestrator.py`)**:
