@@ -122,18 +122,25 @@
     </div>
 
     <!-- Profile / auth -->
-    <div id="profile-card" class="profile-card" title="Click to view student profile from Indus LMS" hidden>
+    <div id="profile-card" class="profile-card" title="Click to view student profile" hidden>
       <span id="profile-avatar" class="profile-avatar" aria-hidden="true">S</span>
       <div class="profile-id">
-        <b id="profile-name">Student</b>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <b id="profile-name">Student</b>
+          <span id="lms-status-pill" class="lms-status-pill">Standalone</span>
+        </div>
         <span id="profile-email"></span>
         <span id="profile-grade"></span>
       </div>
       <div class="profile-actions">
+        <button id="link-lms-btn" class="signout-btn" type="button" title="Link Indus LMS">Link LMS</button>
         <button id="signout-btn" class="signout-btn" type="button" title="Sign out">Sign out</button>
       </div>
     </div>
-    <button id="login-trigger" class="login-trigger" type="button">Sign in with Indus LMS</button>
+    <div id="unauth-box" class="unauth-box">
+      <button id="login-trigger" class="login-trigger" type="button">Sign in with Indus LMS</button>
+      <button id="start-local-trigger" class="btn ghost sm full" type="button" style="margin-top:6px;width:100%;">Start Independent IB Study</button>
+    </div>
 
     <!-- What needs me now? -->
     <section id="section-now" class="side-section" aria-labelledby="head-now">

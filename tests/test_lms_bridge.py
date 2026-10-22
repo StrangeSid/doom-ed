@@ -245,6 +245,30 @@ def test_build_study_triage(mock_session, test_db, session_store, monkeypatch):
     assert triage["before_break"][0]["id"] == "fa_due_soon"
 
 
+def test_build_study_triage_standalone(test_db, session_store):
+    """Standalone session without LMS tokens builds rich IB study triage without errors."""
+    from app.sessions import Session
+    local_sess = Session(
+        access="",
+        refresh="",
+        tenant="local",
+        uid="standalone_1",
+        name="IB Solo",
+        subjects=["Physics HL", "Economics SL"],
+        target_session="May 2026",
+    )
+    triage = build_study_triage(local_sess, test_db, session_store)
+
+    assert triage["lms_connected"] is False
+    assert "now" in triage
+    assert "weak_topics" in triage
+    assert "before_break" in triage
+    assert len(triage["now"]["due_soon"]) > 0
+    assert triage["now"]["due_soon"][0]["subject"] == "Physics HL"
+    assert len(triage["weak_topics"]) > 0
+    assert len(triage["before_break"]) > 0
+
+
 def test_write_confirmation_flow(mock_session, monkeypatch):
     import app.lms_bridge as bridge
 

@@ -55,6 +55,10 @@ const profileEmail = $("profile-email");
 const profileGrade = $("profile-grade");
 const signoutBtn = $("signout-btn");
 const loginTrigger = $("login-trigger");
+const lmsStatusPill = $("lms-status-pill");
+const linkLmsBtn = $("link-lms-btn");
+const unauthBox = $("unauth-box");
+const startLocalTrigger = $("start-local-trigger");
 
 const countNow = $("count-now");
 const countOverdue = $("count-overdue");
@@ -285,13 +289,27 @@ async function checkAuth() {
 function renderProfile() {
   if (currentSession) {
     profileCard.hidden = false;
+    if (unauthBox) unauthBox.hidden = true;
     loginTrigger.hidden = true;
     profileName.textContent = currentSession.name || "Student";
     profileEmail.textContent = currentSession.email || "";
     profileGrade.textContent = currentSession.grade || "";
     profileAvatar.textContent = (currentSession.name || "S")[0].toUpperCase();
+
+    if (lmsStatusPill) {
+      if (currentSession.is_lms_connected) {
+        lmsStatusPill.textContent = "LMS Linked";
+        lmsStatusPill.className = "lms-status-pill connected";
+        if (linkLmsBtn) linkLmsBtn.hidden = true;
+      } else {
+        lmsStatusPill.textContent = "Standalone";
+        lmsStatusPill.className = "lms-status-pill";
+        if (linkLmsBtn) linkLmsBtn.hidden = false;
+      }
+    }
   } else {
     profileCard.hidden = true;
+    if (unauthBox) unauthBox.hidden = false;
     loginTrigger.hidden = false;
     clearTriageUI();
   }
@@ -303,6 +321,33 @@ signoutBtn.addEventListener("click", async () => {
   renderProfile();
   showToast("Signed out", "info");
 });
+
+if (startLocalTrigger) {
+  startLocalTrigger.addEventListener("click", async () => {
+    try {
+      const res = await fetch("/api/session/local", { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        currentSession = data.student;
+        renderProfile();
+        clearReauthPrompt();
+        loadTriage();
+        loadThreads();
+        showToast("Started independent IB study session", "success");
+      }
+    } catch (e) {
+      showToast("Could not start session", "error");
+    }
+  });
+}
+
+if (linkLmsBtn) {
+  linkLmsBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    loginError.hidden = true;
+    loginModal.showModal();
+  });
+}
 
 loginTrigger.addEventListener("click", () => {
   loginError.hidden = true;
@@ -1100,7 +1145,13 @@ function openProfileModal() {
   if (profAvatar) profAvatar.textContent = (currentSession.name || "S")[0].toUpperCase();
   if (profName) profName.textContent = currentSession.name || "Student";
   if (profEmail) profEmail.textContent = currentSession.email || "";
-  if (profSchool) profSchool.textContent = currentSession.school || currentSession.organisation_name || "Indus International School";
+  if (profSchool) {
+    if (currentSession.is_lms_connected) {
+      profSchool.textContent = currentSession.school || currentSession.organisation_name || "Indus LMS Linked";
+    } else {
+      profSchool.textContent = "Independent IB Candidate";
+    }
+  }
   if (profGrade) profGrade.textContent = currentSession.grade || "—";
   if (profProgram) profProgram.textContent = currentSession.program || "Diploma Programme";
   if (profAdmission) profAdmission.textContent = currentSession.admission_no || "—";

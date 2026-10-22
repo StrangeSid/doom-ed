@@ -143,3 +143,64 @@ def test_ib_proxy_endpoints(client, monkeypatch):
     res = client.get("/api/ib/search?q=physics")
     assert res.status_code == 200
     assert res.json()["data"]["data"][0]["title"] == "Physics Paper 1"
+
+
+def test_start_local_session(client):
+    """Local session creates valid independent student profile without LMS."""
+    res = client.post(
+        "/api/session/local",
+        json={
+            "name": "Alex Candidate",
+            "grade": "DP 2",
+            "subjects": ["Physics HL", "Mathematics: Analysis and Approaches HL"],
+            "target_session": "May 2026",
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "ok"
+    assert data["student"]["name"] == "Alex Candidate"
+    assert data["student"]["is_lms_connected"] is False
+    assert "Physics HL" in data["student"]["subjects"]
+
+    # Cookie was set and session endpoint returns student
+    sess_res = client.get("/api/session")
+    assert sess_res.status_code == 200
+    assert sess_res.json()["student"]["name"] == "Alex Candidate"
+    assert sess_res.json()["student"]["is_lms_connected"] is False
+
+
+def test_standalone_study_triage(client):
+    """Study triage works independently for local sessions with zero LMS credentials."""
+    client.post(
+        "/api/session/local",
+        json={"name": "Independent Learner", "grade": "DP 2"},
+    )
+    res = client.get("/api/study")
+    assert res.status_code == 200
+    data = res.json()["data"]
+    assert data["lms_connected"] is False
+    assert len(data["now"]["due_soon"]) > 0
+    assert len(data["weak_topics"]) > 0
+    assert len(data["before_break"]) > 0
+    assert "May 2026" in data["now"]["exam_countdown"]
+
+
+def test_update_profile(client):
+    """Students can update their chosen IB subjects and exam session."""
+    client.post("/api/session/local")
+    res = client.post(
+        "/api/profile",
+        json={
+            "name": "Updated Name",
+            "grade": "DP 1",
+            "subjects": ["Economics HL", "History HL"],
+            "target_session": "Nov 2026",
+        },
+    )
+    assert res.status_code == 200
+    student = res.json()["student"]
+    assert student["name"] == "Updated Name"
+    assert student["grade"] == "DP 1"
+    assert student["subjects"] == ["Economics HL", "History HL"]
+    assert student["target_session"] == "Nov 2026"

@@ -10,9 +10,11 @@ Reference documentation for the HTTP endpoints, agent tools, and event stream in
 
 | Endpoint | Method | Body / Params | Description |
 |---|---|---|---|
-| `/api/login` | `POST` | `{"email": "...", "password": "..."}` | Authenticates against Indus LMS, establishes session, and returns HttpOnly `doomed_sid` cookie. |
+| `/api/session/local` | `POST` | `{"name": "...", "grade": "...", "subjects": [...]}` | Creates standalone independent IB session (zero LMS credentials required). Sets HttpOnly `doomed_sid` cookie. |
+| `/api/profile` | `POST` | `{"name": "...", "grade": "...", "subjects": [...], "target_session": "..."}` | Updates local IB student profile settings (subjects, grade, target exam session). |
+| `/api/login` | `POST` | `{"email": "...", "password": "..."}` | Optional connector: authenticates against Indus LMS, links school account, and sets HttpOnly `doomed_sid` cookie. |
 | `/api/logout` | `POST` | — | Clears server-side session and deletes cookie. |
-| `/api/session` | `GET` | — | Returns authenticated student profile (`name`, `email`, `uid`, `tenant`, `grade`). Returns `401` if not authenticated. |
+| `/api/session` | `GET` | — | Returns student profile (`name`, `grade`, `subjects`, `target_session`, `is_lms_connected`). Returns `401` if no session cookie exists. |
 
 ---
 
@@ -20,7 +22,7 @@ Reference documentation for the HTTP endpoints, agent tools, and event stream in
 
 | Endpoint | Method | Body / Params | Description |
 |---|---|---|---|
-| `/api/study` | `GET` | `refresh=true` (optional) | Returns 3-question student triage: `now` (overdue, due soon, calendar today, unread notices), `weak_topics` (fix list with scores & wrong questions), and `before_break` (upcoming load queue). |
+| `/api/study` | `GET` | `refresh=true` (optional) | Returns 3-question student triage: `now` (diagnostic papers, exam countdown, or overdue school work if LMS linked), `weak_topics` (Socratic quiz misses and syllabus fix list), and `before_break` (IB exam milestone queue or upcoming school deadlines). Works 100% standalone. |
 
 ---
 

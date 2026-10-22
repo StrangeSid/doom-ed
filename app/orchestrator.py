@@ -650,22 +650,31 @@ class Orchestrator:
 
                 # C. WRITE CONFIRM CARD (PAUSES LOOP)
                 elif fn_name == "confirm_lms_write":
-                    action = fn_args.get("action", "")
-                    payload = fn_args.get("payload", {})
-                    reason = fn_args.get("reason", "")
-                    tok_dict = lms_bridge.request_write_confirmation(
-                        self.write_mgr, session, action, payload
-                    )
-                    card_data = {
-                        "card_type": "write_confirm",
-                        "token_id": tok_dict["token_id"],
-                        "action": action,
-                        "payload": payload,
-                        "reason": reason,
-                        "expires_at": tok_dict["expires_at"],
-                    }
-                    yield {"event": "card", "data": card_data}
-                    paused_for_card = True
+                    if not getattr(session, "is_lms_authenticated", False):
+                        yield self._append_tool_result(
+                            llm_messages,
+                            thread_id,
+                            call_id,
+                            {"status": "lms_not_connected", "message": "Indus LMS is not connected. School writes cannot be performed in standalone IB mode."},
+                            fn_name,
+                        )
+                    else:
+                        action = fn_args.get("action", "")
+                        payload = fn_args.get("payload", {})
+                        reason = fn_args.get("reason", "")
+                        tok_dict = lms_bridge.request_write_confirmation(
+                            self.write_mgr, session, action, payload
+                        )
+                        card_data = {
+                            "card_type": "write_confirm",
+                            "token_id": tok_dict["token_id"],
+                            "action": action,
+                            "payload": payload,
+                            "reason": reason,
+                            "expires_at": tok_dict["expires_at"],
+                        }
+                        yield {"event": "card", "data": card_data}
+                        paused_for_card = True
 
                 # D. CREATE VISUAL (MAKER SUBAGENT LOOP)
                 elif fn_name == "create_visual":
@@ -685,21 +694,39 @@ class Orchestrator:
 
                 # E. SEARCH LMS FILES
                 elif fn_name == "search_lms_files":
-                    q = fn_args.get("query", "")
-                    sub = fn_args.get("subject")
-                    ext = fn_args.get("ext")
-                    lim = _clamp_int(fn_args.get("limit", 10), 1, 25)
-                    res = lms_bridge.search_files(session, self.db, q, subject=sub, ext=ext, limit=lim)
-                    yield self._append_tool_result(
-                        llm_messages, thread_id, call_id, _slim_file_rows(res), fn_name
-                    )
+                    if not getattr(session, "is_lms_authenticated", False):
+                        yield self._append_tool_result(
+                            llm_messages,
+                            thread_id,
+                            call_id,
+                            {"status": "lms_not_connected", "message": "Indus LMS is not connected. Student is studying independently with the IB resource catalog. Use search_ib_resources to find past papers and markschemes."},
+                            fn_name,
+                        )
+                    else:
+                        q = fn_args.get("query", "")
+                        sub = fn_args.get("subject")
+                        ext = fn_args.get("ext")
+                        lim = _clamp_int(fn_args.get("limit", 10), 1, 25)
+                        res = lms_bridge.search_files(session, self.db, q, subject=sub, ext=ext, limit=lim)
+                        yield self._append_tool_result(
+                            llm_messages, thread_id, call_id, _slim_file_rows(res), fn_name
+                        )
 
                 # F. BROWSE LMS FOLDER
                 elif fn_name == "browse_lms_folder":
-                    cid = fn_args.get("course_id")
-                    fid = fn_args.get("folder_id")
-                    res = lms_bridge.browse_lms_folder(session, self.db, course_id=cid, folder_id=fid)
-                    yield self._append_tool_result(llm_messages, thread_id, call_id, res, fn_name)
+                    if not getattr(session, "is_lms_authenticated", False):
+                        yield self._append_tool_result(
+                            llm_messages,
+                            thread_id,
+                            call_id,
+                            {"status": "lms_not_connected", "message": "Indus LMS is not connected. Use search_ib_resources to find official past papers and curriculum guides."},
+                            fn_name,
+                        )
+                    else:
+                        cid = fn_args.get("course_id")
+                        fid = fn_args.get("folder_id")
+                        res = lms_bridge.browse_lms_folder(session, self.db, course_id=cid, folder_id=fid)
+                        yield self._append_tool_result(llm_messages, thread_id, call_id, res, fn_name)
 
                 # G. SEARCH IB RESOURCES
                 elif fn_name == "search_ib_resources":

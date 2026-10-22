@@ -687,18 +687,130 @@ def _parse_due_timestamp(date_str: str | None) -> float:
         return float("inf")
 
 
+def _build_standalone_ib_triage(session: Session, db: Database) -> dict[str, Any]:
+    """Compute triage for standalone IB study when LMS is not connected."""
+    now_ts = time.time()
+    subjects = getattr(session, "subjects", []) or [
+        "Physics HL",
+        "Mathematics: Analysis and Approaches HL",
+        "Economics SL",
+        "Chemistry SL",
+    ]
+    target_session = getattr(session, "target_session", "May 2026")
+
+    # 1. Now: Curated IB past paper diagnostic sets for enrolled subjects
+    due_soon = []
+    for idx, subj in enumerate(subjects[:4]):
+        due_soon.append({
+            "id": f"ib_diag_{idx}",
+            "title": f"{subj} — Diagnostic Practice Set",
+            "subject": subj,
+            "due": "High yield",
+            "type": "ib_practice",
+        })
+
+    now_section: dict[str, Any] = {
+        "overdue": [],
+        "due_soon": due_soon,
+        "calendar_today": [],
+        "unread_notifications": [],
+        "lms_connected": False,
+        "exam_countdown": f"{target_session} Examination Session",
+    }
+
+    # 2. Weak topics: Socratic quiz misses + foundational IB topics
+    weak_topics: list[dict[str, Any]] = []
+    owner = session.owner
+    unpassed = db.get_unpassed_quizzes(owner, limit=5)
+    for q in unpassed:
+        q_text = q.get("question", "Check concept")
+        weak_topics.append({
+            "id": f"quiz:{q.get('call_id')}",
+            "title": q_text[:80],
+            "topic": q_text[:60],
+            "subject": "IB Socratic Lesson",
+            "score": 0,
+            "total": 1,
+            "score_label": "0 / 1 (Missed check)",
+            "why_weak": "Concept check missed in recent Socratic lesson. Reconstruct necessity from foundations.",
+            "wrong_questions": [{"question_id": q.get("call_id"), "text": q_text, "student_answer": "Needs review"}],
+        })
+
+    # High-yield IB core topics fallback if few quiz misses
+    ib_foundations = [
+        {"subject": "Physics HL", "topic": "Wave Optics, Interference & Single-Slit Diffraction", "why": "High-yield IB Paper 2 derivation topic. Verify path difference and phase relationships."},
+        {"subject": "Mathematics: Analysis and Approaches HL", "topic": "Calculus: Integration by Parts & Differential Equations", "why": "Core Paper 1 & 2 problem type. Reconstruct step-by-step logic."},
+        {"subject": "Chemistry SL", "topic": "Chemical Equilibrium Law & Le Chatelier's Principle", "why": "Essential quantitative and conceptual foundation across multiple exam questions."},
+        {"subject": "Economics SL", "topic": "Market Failure, Positive & Negative Externalities", "why": "Core Paper 1 essay & real-world diagram analysis."},
+    ]
+    for item in ib_foundations:
+        if len(weak_topics) >= 4:
+            break
+        weak_topics.append({
+            "id": f"ib_core_{item['subject'].replace(' ', '_')}",
+            "title": item["topic"],
+            "topic": item["topic"],
+            "subject": item["subject"],
+            "score": 0,
+            "total": 1,
+            "score_label": "Core syllabus",
+            "why_weak": item["why"],
+            "wrong_questions": [],
+        })
+
+    one_day = 86400
+    before_break = [
+        {
+            "id": "ib_m1",
+            "title": "Paper 1 (Multiple Choice) Timed Diagnostic Drill",
+            "subject": "All Subjects",
+            "due": "Milestone 1",
+            "due_ts": now_ts + 7 * one_day,
+            "type": "exam_prep",
+        },
+        {
+            "id": "ib_m2",
+            "title": "Paper 2 (Structured Response) Derivations & Full Formulations",
+            "subject": "All Subjects",
+            "due": "Milestone 2",
+            "due_ts": now_ts + 14 * one_day,
+            "type": "exam_prep",
+        },
+        {
+            "id": "ib_m3",
+            "title": "Formula & Data Booklet Derivation Checkpoint",
+            "subject": "Sciences & Mathematics",
+            "due": "Milestone 3",
+            "due_ts": now_ts + 21 * one_day,
+            "type": "exam_prep",
+        },
+    ]
+
+    return {
+        "now": now_section,
+        "weak_topics": weak_topics,
+        "before_break": before_break,
+        "lms_connected": False,
+        "computed_at": now_ts,
+    }
+
+
 def build_study_triage(
     session: Session,
     db: Database,
     store: SessionStore | None = None,
     refresh: bool = False,
 ) -> dict[str, Any]:
-    """Compute the 3 ROADMAP sections from live student data:
-    1. 'now': overdue items, due today/tomorrow, calendar today, unread notifications, attendance.
-    2. 'weak_topics': wrong questions from graded EOL tests, low rubric rows from graded FA/SA, task feedback.
-    3. 'before_break': upcoming unsubmitted work before next calendar break.
+    """Compute the 3 ROADMAP sections from live student data or standalone IB curriculum:
+    1. 'now': overdue items, due today/tomorrow, calendar today, unread notifications.
+    2. 'weak_topics': wrong questions from graded EOL tests, low rubric rows from graded FA/SA, task feedback, and Socratic quiz misses.
+    3. 'before_break': upcoming unsubmitted work before next calendar break or IB exam milestone.
     """
+    if not getattr(session, "is_lms_authenticated", False):
+        return _build_standalone_ib_triage(session, db)
+
     entry = cache.get_entry(session.sid, tenant=session.tenant, uid=session.uid)
+
 
     def _triage_calc() -> dict[str, Any]:
         payload = fetch_student_payload(session, store=store, refresh=refresh)
@@ -847,10 +959,13 @@ def build_study_triage(
 
         before_break.sort(key=lambda x: x["due_ts"])
 
+        now_section["lms_connected"] = True
+
         result = {
             "now": now_section,
             "weak_topics": weak_topics,
             "before_break": before_break,
+            "lms_connected": True,
             "computed_at": time.time(),
         }
         if auth_error:

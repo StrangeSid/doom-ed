@@ -1085,6 +1085,27 @@ class Database:
             self._conn.commit()
         return self.get_quiz_state(call_id, owner=owner)
 
+    def get_unpassed_quizzes(self, owner: str, limit: int = 10) -> list[dict[str, Any]]:
+        """Return recent quiz states where the student missed or selected 'I don't know'."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT call_id, thread_id, question, options_json, grade_result_json, created_at
+                   FROM quiz_states
+                   WHERE owner = ? AND answered = 1
+                   ORDER BY created_at DESC LIMIT 50""",
+                (owner.strip(),),
+            ).fetchall()
+            unpassed = []
+            for r in rows:
+                row_dict = dict(r)
+                res_raw = row_dict.get("grade_result_json")
+                res = json.loads(res_raw) if res_raw else {}
+                if res.get("correct") is False or res.get("dontKnow") is True:
+                    unpassed.append(row_dict)
+                    if len(unpassed) >= limit:
+                        break
+            return unpassed
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()

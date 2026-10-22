@@ -49,7 +49,7 @@ from app import cache, config, file_reader, ib_client, lms_bridge
 from app.db import Database
 from app.orchestrator import Orchestrator
 from app.security import Cipher, WriteConfirmationManager
-from app.sessions import Session, SessionStore, import_local_indus_token
+from app.sessions import Session, SessionStore, create_local_session, import_local_indus_token
 
 COOKIE_NAME = "doomed_sid"
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -137,6 +137,92 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class LocalSessionRequest(BaseModel):
+    name: str = "IB Student"
+    grade: str = "DP 2"
+    subjects: list[str] | None = None
+    target_session: str = "May 2026"
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: str | None = None
+    grade: str | None = None
+    subjects: list[str] | None = None
+    target_session: str | None = None
+
+
+@app.post("/api/session/local")
+def start_local_session(
+    response: Response,
+    body: LocalSessionRequest = LocalSessionRequest(),
+) -> dict[str, Any]:
+    """Create a standalone Session with no LMS credentials."""
+    sess = create_local_session(
+        session_store,
+        name=body.name,
+        grade=body.grade,
+        subjects=body.subjects,
+        target_session=body.target_session,
+    )
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=sess.sid,
+        httponly=True,
+        samesite="lax",
+        max_age=86400 * 30,
+        secure=False,
+    )
+    return {
+        "status": "ok",
+        "student": {
+            "name": sess.name,
+            "email": sess.email,
+            "uid": sess.uid,
+            "tenant": sess.tenant,
+            "grade": sess.grade,
+            "curriculum": sess.curriculum,
+            "subjects": sess.subjects,
+            "target_session": sess.target_session,
+            "is_lms_connected": False,
+            "lms_school": "",
+        },
+    }
+
+
+@app.post("/api/profile")
+def update_profile(
+    body: ProfileUpdateRequest,
+    request: Request,
+    doomed_sid: str | None = Cookie(None),
+) -> dict[str, Any]:
+    """Update local IB student profile settings (name, grade, subjects, target exam)."""
+    sess = get_current_session(request, doomed_sid)
+    if body.name is not None:
+        sess.name = body.name.strip()
+    if body.grade is not None:
+        sess.grade = body.grade.strip()
+    if body.subjects is not None:
+        sess.subjects = [s.strip() for s in body.subjects if s.strip()]
+    if body.target_session is not None:
+        sess.target_session = body.target_session.strip()
+    session_store.save(sess)
+    return {
+        "status": "ok",
+        "student": {
+            "name": sess.name,
+            "email": sess.email,
+            "uid": sess.uid,
+            "tenant": sess.tenant,
+            "grade": sess.grade,
+            "curriculum": getattr(sess, "curriculum", "DP"),
+            "subjects": getattr(sess, "subjects", []),
+            "target_session": getattr(sess, "target_session", "May 2026"),
+            "is_lms_connected": getattr(sess, "is_lms_authenticated", False),
+            "lms_school": getattr(sess, "lms_school", ""),
+        },
+    }
+
+
 @app.post("/api/login")
 def login(body: LoginRequest, response: Response) -> dict[str, Any]:
     """Authenticate with Indus LMS credentials and set HttpOnly session cookie."""
@@ -161,6 +247,11 @@ def login(body: LoginRequest, response: Response) -> dict[str, Any]:
             "uid": sess.uid,
             "tenant": sess.tenant,
             "grade": sess.grade,
+            "curriculum": getattr(sess, "curriculum", "DP"),
+            "subjects": getattr(sess, "subjects", []),
+            "target_session": getattr(sess, "target_session", "May 2026"),
+            "is_lms_connected": True,
+            "lms_school": getattr(sess, "lms_school", ""),
         },
     }
 
@@ -196,18 +287,24 @@ def session_info(
         "uid": sess.uid,
         "tenant": sess.tenant,
         "grade": sess.grade,
+        "curriculum": getattr(sess, "curriculum", "DP"),
+        "subjects": getattr(sess, "subjects", []),
+        "target_session": getattr(sess, "target_session", "May 2026"),
+        "is_lms_connected": getattr(sess, "is_lms_authenticated", False),
+        "lms_school": getattr(sess, "lms_school", ""),
     }
     profile_error: str | None = None
-    try:
-        payload = lms_bridge.fetch_student_payload(sess, session_store, refresh=False)
-        if isinstance(payload.get("student"), dict):
-            student_info.update(payload["student"])
-        if payload.get("_auth_error"):
-            profile_error = payload["_auth_error"]
-    except lms_bridge.LMSNotAuthenticatedError as e:
-        profile_error = str(e)
-    except Exception as e:
-        profile_error = str(e)
+    if getattr(sess, "is_lms_authenticated", False):
+        try:
+            payload = lms_bridge.fetch_student_payload(sess, session_store, refresh=False)
+            if isinstance(payload.get("student"), dict):
+                student_info.update(payload["student"])
+            if payload.get("_auth_error"):
+                profile_error = payload["_auth_error"]
+        except lms_bridge.LMSNotAuthenticatedError as e:
+            profile_error = str(e)
+        except Exception as e:
+            profile_error = str(e)
 
     body: dict[str, Any] = {
         "status": "ok",

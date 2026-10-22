@@ -18,6 +18,15 @@ from app.security import Cipher, owner_key
 
 DEFAULT_IDLE: float = 12 * 3600.0
 
+DEFAULT_SUBJECTS: list[str] = [
+    "Physics HL",
+    "Mathematics: Analysis and Approaches HL",
+    "Economics SL",
+    "Chemistry SL",
+    "English A Literature HL",
+    "Spanish B SL",
+]
+
 
 def _extract_jwt_uid(token: str) -> str:
     """Best-effort extraction of user_id/sub from an unverified JWT payload."""
@@ -51,6 +60,10 @@ class Session:
         email: str = "",
         uid: str = "",
         grade: str = "",
+        curriculum: str = "DP",
+        subjects: list[str] | None = None,
+        target_session: str = "May 2026",
+        lms_school: str = "",
         seen: float | None = None,
         created: float | None = None,
     ) -> None:
@@ -106,15 +119,26 @@ class Session:
         self.email: str = resolved_email
         self.uid: str = resolved_uid
         self.grade: str = resolved_grade
+        self.curriculum: str = curriculum or "DP"
+        self.subjects: list[str] = list(subjects) if subjects is not None else list(DEFAULT_SUBJECTS)
+        self.target_session: str = target_session or "May 2026"
+        self.lms_school: str = lms_school or ""
         self.seen: float = float(seen if seen is not None else now)
         self.created: float = float(created if created is not None else self.seen)
         self.lock = threading.Lock()
+
+    @property
+    def is_lms_authenticated(self) -> bool:
+        """True when session holds valid Indus LMS tokens."""
+        return bool(self.access and self.tenant and self.tenant != "local")
 
     @property
     def owner(self) -> str:
         """Canonical per-student isolation key '{tenant}:{uid}'."""
         tenant = (self.tenant or "").strip()
         uid = (self.uid or "").strip()
+        if tenant == "local" or not tenant:
+            return f"local:{uid or 'student'}"
         user = self.user if isinstance(getattr(self, "user", None), dict) else {}
 
         if not tenant:
@@ -196,6 +220,14 @@ class SessionStore:
             self._db.execute("ALTER TABLE sessions ADD COLUMN uid TEXT DEFAULT ''")
         if "grade" not in cols:
             self._db.execute("ALTER TABLE sessions ADD COLUMN grade TEXT DEFAULT ''")
+        if "subjects" not in cols:
+            self._db.execute("ALTER TABLE sessions ADD COLUMN subjects TEXT DEFAULT ''")
+        if "curriculum" not in cols:
+            self._db.execute("ALTER TABLE sessions ADD COLUMN curriculum TEXT DEFAULT 'DP'")
+        if "target_session" not in cols:
+            self._db.execute("ALTER TABLE sessions ADD COLUMN target_session TEXT DEFAULT 'May 2026'")
+        if "lms_school" not in cols:
+            self._db.execute("ALTER TABLE sessions ADD COLUMN lms_school TEXT DEFAULT ''")
 
         self._db.execute(
             """CREATE TABLE IF NOT EXISTS cache (
@@ -243,11 +275,13 @@ class SessionStore:
         s.seen = time.time()
         if not s.created:
             s.created = s.seen
+        subjects_json = json.dumps(s.subjects or list(DEFAULT_SUBJECTS))
         with self._lock:
             self._db.execute(
                 """INSERT OR REPLACE INTO sessions
-                   (sid, access, refresh, tenant, name, email, uid, grade, seen, created)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (sid, access, refresh, tenant, name, email, uid, grade, seen, created,
+                    subjects, curriculum, target_session, lms_school)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     sid,
                     self._enc(s.access),
@@ -259,6 +293,10 @@ class SessionStore:
                     s.grade,
                     s.seen,
                     s.created,
+                    subjects_json,
+                    s.curriculum,
+                    s.target_session,
+                    s.lms_school,
                 ),
             )
             self._db.commit()
@@ -271,7 +309,8 @@ class SessionStore:
         now = time.time()
         with self._lock:
             row = self._db.execute(
-                """SELECT sid, access, refresh, tenant, name, email, uid, grade, seen, created
+                """SELECT sid, access, refresh, tenant, name, email, uid, grade, seen, created,
+                          subjects, curriculum, target_session, lms_school
                    FROM sessions WHERE sid = ?""",
                 (sid,),
             ).fetchone()
@@ -288,6 +327,10 @@ class SessionStore:
                 grade,
                 seen,
                 created,
+                subjects_raw,
+                curriculum,
+                target_session,
+                lms_school,
             ) = row
             if now - float(seen) > self.idle:
                 self._db.execute("DELETE FROM sessions WHERE sid = ?", (sid,))
@@ -305,6 +348,11 @@ class SessionStore:
             self._db.execute("UPDATE sessions SET seen = ? WHERE sid = ?", (now, sid))
             self._db.commit()
 
+        try:
+            subjects_list = json.loads(subjects_raw) if subjects_raw else list(DEFAULT_SUBJECTS)
+        except Exception:
+            subjects_list = list(DEFAULT_SUBJECTS)
+
         return Session(
             access=access,
             refresh=refresh,
@@ -314,6 +362,10 @@ class SessionStore:
             email=email or "",
             uid=uid or "",
             grade=grade or "",
+            curriculum=curriculum or "DP",
+            subjects=subjects_list,
+            target_session=target_session or "May 2026",
+            lms_school=lms_school or "",
             seen=now,
             created=float(created),
         )
@@ -323,11 +375,13 @@ class SessionStore:
         if not s.sid:
             return
         s.seen = time.time()
+        subjects_json = json.dumps(s.subjects or list(DEFAULT_SUBJECTS))
         with self._lock:
             self._db.execute(
                 """UPDATE sessions
                    SET access = ?, refresh = ?, tenant = ?, name = ?, email = ?,
-                       uid = ?, grade = ?, seen = ?
+                       uid = ?, grade = ?, seen = ?, subjects = ?, curriculum = ?,
+                       target_session = ?, lms_school = ?
                    WHERE sid = ?""",
                 (
                     self._enc(s.access),
@@ -338,6 +392,10 @@ class SessionStore:
                     s.uid,
                     s.grade,
                     s.seen,
+                    subjects_json,
+                    s.curriculum,
+                    s.target_session,
+                    s.lms_school,
                     s.sid,
                 ),
             )
@@ -469,3 +527,28 @@ def import_local_indus_token(
 
     store.add(session)
     return session
+
+
+def create_local_session(
+    store: SessionStore,
+    name: str = "IB Student",
+    grade: str = "DP 2",
+    subjects: list[str] | None = None,
+    target_session: str = "May 2026",
+) -> Session:
+    """Create a standalone Session with no LMS credentials."""
+    sess = Session(
+        access="",
+        refresh="",
+        tenant="local",
+        name=name or "IB Student",
+        email="",
+        uid="student",
+        grade=grade or "DP 2",
+        curriculum="DP",
+        subjects=subjects or list(DEFAULT_SUBJECTS),
+        target_session=target_session or "May 2026",
+    )
+    store.add(sess)
+    return sess
+

@@ -1,6 +1,6 @@
 # doom-ed
 
-An offline-first AI study coach that connects live Indus LMS schoolwork with a 53,000+ IB resource bank, running Socratic teaching sessions through interactive checks and an in-app document viewer.
+An offline-first AI study coach for the International Baccalaureate that pairs a 53,000+ IB resource bank with a Socratic tutoring engine, turn-gated concept checks, an in-app document viewer, and optional live Indus LMS sync.
 
 ![doom-ed Study Coach](docs/assets/homepage.png)
 
@@ -9,23 +9,24 @@ An offline-first AI study coach that connects live Indus LMS schoolwork with a 5
 ## Why this exists
 
 Studying for the International Baccalaureate while keeping up with school tasks usually means keeping twenty tabs open:
-- Indus LMS for daily tasks, end-of-lesson (EOL) tests, and rubric feedback
 - Past paper mirrors for exam questions and markschemes
+- Subject syllabi and formula booklets
 - Chatbots that either hallucinate answers or lecture without checking if the foundation actually clicked
+- School LMS portals for daily tasks, end-of-lesson (EOL) tests, and rubric feedback
 
-Doom-ed turns that scattered workflow into a single local surface. It connects directly to Indus LMS, inspects what you got wrong on graded tests, pairs those weak areas with official IB past papers, and teaches concepts from first principles using calibrated checks.
+Doom-ed turns that scattered workflow into a single local surface. It functions out of the box for any IB student as an independent study coach, and optionally connects to Indus LMS to pull in school assignments, calendar deadlines, and graded test results.
 
 ---
 
 ## How it works
 
-### 1. Live school triage
-doom-ed connects to Indus LMS using your school account and builds an immediate dashboard:
-- **What needs me now**: Overdue assignments, work due today or tomorrow, today's timetable, and unread notifications.
-- **What am I weak at**: Automatically inspects graded EOL tests and formative assessments where your score was below total. It extracts the exact questions and rubric criteria you missed into an actionable fix list.
-- **Before next break**: Queues upcoming deadlines ranked by due date before the next holiday on the school calendar.
+### 1. Standalone IB study triage & optional school sync
+doom-ed builds an immediate three-pane study triage:
+- **What needs me now**: Curated past paper diagnostic sets for your enrolled IB DP subjects, exam countdown, and (when linked) live school assignments, today's timetable, and unread notifications.
+- **What am I weak at**: Tracks your misses across interactive Socratic lesson quizzes and syllabus fundamentals. When Indus LMS is linked, it also inspects graded school EOL tests and formative assessments to extract missed questions and rubric criteria into your fix list.
+- **Before next break**: Upcoming IB preparation milestones (timed Paper 1 diagnostics, Paper 2 derivations, formula derivations) and upcoming school calendar deadlines.
 
-No synthetic data or demo mocks. If the school session expires, doom-ed flags it clearly and prompts for re-authentication rather than showing empty state.
+No synthetic demo mocks. Operates 100% standalone out of the box, with zero LMS credentials required.
 
 ### 2. Socratic teaching engine
 Based on the dependency-graph pedagogy from `amosblomqvist/learn`:
@@ -115,15 +116,15 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 Open `http://127.0.0.1:8000`:
-- If `~/.induslms_token.json` exists from `induslms-agent`, your session loads automatically.
-- Otherwise, click **"Sign in with Indus LMS"** to authenticate with your school credentials.
+- Click **"Start Independent IB Study"** to immediately launch your personalized IB coaching session.
+- Or click **"Sign in with Indus LMS"** (or use local `~/.induslms_token.json`) to sync live school assignments and calendar events.
 
 ---
 
 ## Testing
 
 ```bash
-# Run full unit and integration suite (155 tests)
+# Run full unit and integration suite (159 tests)
 pytest
 
 # Run Playwright browser tests
