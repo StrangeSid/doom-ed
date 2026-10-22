@@ -542,6 +542,11 @@ class Orchestrator:
                 tool_calls=tool_calls if tool_calls else None,
             )
 
+            asst_dict: dict[str, Any] = {"role": "assistant", "content": content or ""}
+            if tool_calls:
+                asst_dict["tool_calls"] = tool_calls
+            llm_messages.append(asst_dict)
+
             if not tool_calls:
                 break
 

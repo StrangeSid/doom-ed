@@ -4,7 +4,7 @@ AI study coach grounded in live Indus LMS student data, the 53k+ IB resource ind
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](COPYING)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](requirements.txt)
-[![Tests: 107 passed](https://img.shields.io/badge/Tests-107%20passed-brightgreen.svg)](tests/)
+[![Tests: 135 passed](https://img.shields.io/badge/Tests-135%20passed-brightgreen.svg)](tests/)
 
 ---
 

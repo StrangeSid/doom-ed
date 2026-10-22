@@ -318,3 +318,40 @@ def test_acl_error_does_not_name_the_owner(test_db):
     with pytest.raises(PermissionError) as exc:
         get_file_bytes(test_db, owner_b, "a" * 64)
     assert owner_a not in str(exc.value)
+
+
+# --- S1: unsubmitted/ungraded tests must not bypass lockout -----------------
+
+
+def test_ungraded_and_not_yet_graded_are_blocked():
+    from app.security import assert_not_live_test
+
+    for status in ("ungraded", "not_yet_graded", "under_grading"):
+        with pytest.raises(PermissionError):
+            assert_not_live_test(item_status=status)
+
+
+# --- S2: cross-origin redirects must strip authorization headers ------------
+
+
+def test_safe_fetch_strips_auth_on_cross_origin_redirect():
+    from app.security import safe_fetch
+
+    mock_sess = MagicMock()
+    mock_sess.get.side_effect = [
+        MagicMock(status_code=302, headers={"location": "https://other.domain.com/file.pdf"}),
+        MagicMock(status_code=200, headers={"content-type": "application/pdf"}),
+    ]
+
+    with patch("app.security.validate_fetch_url"):
+        safe_fetch(
+            "https://school.domain.com/resource/123",
+            headers={"Authorization": "Bearer secret-token", "Accept": "application/pdf"},
+            session=mock_sess,
+        )
+
+    calls = mock_sess.get.call_args_list
+    assert "Authorization" in calls[0].kwargs["headers"]
+    assert "Authorization" not in calls[1].kwargs["headers"]
+
+

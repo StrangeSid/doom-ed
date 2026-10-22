@@ -246,7 +246,13 @@ def safe_fetch(
         )
         if 300 <= resp.status_code < 400 and "location" in resp.headers:
             location = resp.headers["location"]
-            current_url = urljoin(current_url, location)
+            new_url = urljoin(current_url, location)
+            # Strip sensitive credentials if redirect crosses origins
+            old_p = urlparse(current_url)
+            new_p = urlparse(new_url)
+            if (old_p.scheme, old_p.netloc) != (new_p.scheme, new_p.netloc):
+                req_headers = {k: v for k, v in req_headers.items() if k.lower() not in ("authorization", "cookie")}
+            current_url = new_url
             if hasattr(resp, "close"):
                 resp.close()
             continue
@@ -467,6 +473,10 @@ def assert_not_live_test(
             "live",
             "ongoing",
             "not_started",
+            "ungraded",
+            "not_yet_graded",
+            "not_graded",
+            "under_grading",
         ):
             if blocked_token in norm_status:
                 raise PermissionError(LIVE_TEST_ERROR_MSG)
@@ -475,7 +485,8 @@ def assert_not_live_test(
         raise PermissionError(LIVE_TEST_ERROR_MSG)
 
     is_allowed_status = norm_status in _ALLOWED_TEST_STATUSES or any(
-        tok in norm_status for tok in ("graded", "submitted", "evaluated", "completed", "scored")
+        tok == norm_status or f"_{tok}" in norm_status or f"{tok}_" in norm_status
+        for tok in ("graded", "submitted", "evaluated", "completed", "scored")
     )
 
     if not is_allowed_status and submitted is not True and has_result is not True:

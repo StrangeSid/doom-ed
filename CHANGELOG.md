@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.2] - 2026-10-22
+
+### Fixed
+- Multi-turn tool execution in `app/orchestrator.py`: assistant message with `tool_calls` is now appended to `llm_messages` before tool results are added, complying with OpenAI API specification and preventing silent tool loop aborts.
+- Academic integrity lockout bypass in `app/security.py`: `assert_not_live_test` substring matching on `"graded"` previously matched inside `"ungraded"` and `"not_yet_graded"`. Enforced token boundaries and added explicit blocked status tokens.
+
+### Security
+- Strip `Authorization` and `Cookie` headers in `safe_fetch` on cross-origin HTTP 30x redirect hops, preventing credential leakage to third-party domains.
+
+### Changed
+- Shrunk test cases across `tests/test_orchestrator.py` and `tests/test_security_hardening.py` to minimal reproducer forms (135 passed tests).
+- Unslop pass across documentation and codebase comments.
+
+---
+
 ## [0.1.1] - 2026-10-19
 
 ### Added

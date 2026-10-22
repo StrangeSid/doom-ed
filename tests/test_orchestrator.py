@@ -290,3 +290,33 @@ def test_visual_retry_loop_returns_revised_source(orch, session):
 
     assert res["status"] == "retry_render"
     assert "rect" in res["source"]
+
+
+def test_multi_turn_tool_execution(orch, session):
+    """When a tool is called, orchestrator must pass assistant message and tool result to turn 2."""
+    tool_call = {
+        "id": "c1",
+        "type": "function",
+        "function": {"name": "search_ib_resources", "arguments": "{}"},
+    }
+    calls = []
+
+    def mock_llm(*a, **kw):
+        calls.append(list(kw.get("messages", [])))
+        if len(calls) == 1:
+            return _FakeStream(tool_calls=[tool_call])
+        return _FakeStream(content="done")
+
+    with patch("app.orchestrator.call_llm_chat", side_effect=mock_llm), \
+         patch("app.ib_client.search_ib", return_value=[]):
+        list(orch.process_user_turn(session=session, thread_id="t_m", user_message="find"))
+
+    assert len(calls) == 2
+    roles = [m["role"] for m in calls[1]]
+    assert "assistant" in roles and "tool" in roles
+    asst_idx, tool_idx = roles.index("assistant"), roles.index("tool")
+    assert asst_idx < tool_idx
+    assert calls[1][asst_idx]["tool_calls"] == [tool_call]
+    assert calls[1][tool_idx]["tool_call_id"] == "c1"
+
+
