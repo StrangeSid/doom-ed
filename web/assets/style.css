@@ -328,6 +328,7 @@ img, svg, video { max-width: 100%; }
 }
 .profile-id { flex: 1; min-width: 0; }
 .profile-id b { display: block; font-size: 13.5px; font-weight: 700; color: var(--lp-ink); overflow-wrap: anywhere; }
+.profile-meta-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
 .profile-id span { display: block; font-size: 11.5px; font-weight: 600; color: var(--lp-muted); overflow-wrap: anywhere; }
 .profile-actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
 .signout-btn {
@@ -338,6 +339,8 @@ img, svg, video { max-width: 100%; }
 .signout-btn:hover { color: #f5a9a4; background: rgba(224, 106, 99, 0.14); }
 .lms-status-pill {
   display: inline-block;
+  white-space: nowrap;
+  flex-shrink: 0;
   padding: 1px 6px;
   border-radius: 999px;
   font-size: 10px;

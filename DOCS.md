@@ -81,22 +81,21 @@ Error codes the browser handles:
 
 | Code | Meaning | Client behaviour |
 |---|---|---|
-| `401` | No session, expired session, or the Indus LMS token is invalid. | Sign-in prompt, and a toast naming the expired session. |
+| `401` | No session, or expired session cookie. | Sign-in modal or 1-click independent session button shown. |
 | `403` | The student tried to read a file outside their `owner` scope, or asked about a live/unsubmitted test. | Message shown, request refused. |
 | `502` | Indus LMS or the IB catalog failed upstream. | Toast with the upstream detail. |
 
-`GET /api/session` returns `200` with a `profile_error` field when the session is valid but the LMS profile call failed. So the shell still renders while the student sees what is missing.
+`GET /api/session` returns `200` with a `profile_error` field when the session is valid but the optional LMS sync call failed. So the shell still renders in standalone mode while the student sees what is missing.
 
 ---
 
-## 1.8 Expired Indus token
+## 1.8 Expired Indus token & standalone fallback
 
 The Indus LMS access token expires on its own schedule, independently of the doom-ed session. When that happens:
 
-1. The last known payload stays on screen. It's the student's own data, and an empty page helps nobody.
-2. The response carries an `auth_error` field, and a banner appears above the chat with a **"Sign in again"** action. It stays up until a successful sign-in, so stale numbers are never mistaken for live ones.
-3. The stale copy is only served inside the persistent cache window (one hour by default). Past that the API returns `401` and the student must sign in.
-4. A successful sign-in clears the banner and reloads the triage.
+1. The student remains authenticated in doom-ed in standalone IB mode with full access to their subjects, Socratic lessons, concept checks, and the 53,000+ IB resource bank.
+2. If LMS was previously linked, the response carries an `auth_error` field, and a banner appears above the chat with a **"Sign in again"** action. It stays up until a successful sign-in, so stale numbers are never mistaken for live ones.
+3. A successful sign-in clears the banner and merges school triage back into the IB study dashboard.
 
 ---
 
@@ -138,7 +137,8 @@ The teacher agent has 12 specialized tools:
 
 ### 2.1 Loop guards
 
-The agent takes at most 12 autonomous tool turns per user message. Two guards keep it from stalling:
+The agent takes at most 12 autonomous tool turns per user message. Three guards keep it from stalling:
 
 - **Duplicate call suppression**: a tool call with an identical name and identical arguments is answered once. A repeat returns `{"status": "duplicate"}` and points the model at the earlier result.
 - **Prose before cards**: the teacher prompt requires a short lead-in paragraph before every `quiz` call, so the student reads the reason for the check before the card appears.
+- **Standalone LMS redirection**: when running without an active Indus LMS connection, `search_lms_files`, `browse_lms_folder`, and `confirm_lms_write` immediately return an informative fallback redirecting the agent to `search_ib_resources` without consuming unnecessary search cycles.

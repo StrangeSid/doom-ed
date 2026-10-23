@@ -61,8 +61,9 @@ flowchart TB
 ## 2. Multi-tenant security and storage isolation
 
 1. **Owner Scoping (`tenant:uid`)**:
-   - Students at the same school share an Indus LMS `tenant`, but have distinct `uid`.
-   - Every session, cache key, FTS5 metadata row, chat thread, and file ACL entry is strictly scoped by `owner = f"{tenant}:{uid}"`.
+   - Standalone sessions use `owner = "local:{uid}"` (`local:student`), ensuring zero external service or tenant dependencies.
+   - For Indus LMS linked sessions, students share an Indus LMS `tenant`, but have distinct `uid`, scoped by `owner = f"{tenant}:{uid}"`.
+   - Every session, cache key, FTS5 metadata row, chat thread, and file ACL entry is strictly scoped by `owner`.
    - Student A can't view or search Student B's courses, files, grades, or chat threads even within the same tenant.
 2. **Mandatory File ACL Gate (`file_access` Table)**:
    - File downloads via `/api/files/{sha256}` and document reading tools (`read_document`, `search_within_document`, `inspect_document_pages`) execute:
