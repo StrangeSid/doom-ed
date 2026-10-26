@@ -118,6 +118,34 @@ The Indus LMS access token expires on its own schedule, independently of the doo
 
 ---
 
+## 1.10 Adaptive practice feed (feature-flagged)
+
+The practice engine is opt-in. Set `DOOMED_PRACTICE_ENGINE=1` to expose these routes; with the default `0`, every route returns `404` and the existing app is unchanged. The home UI flag is separate: `DOOMED_HOME_FEED=1`.
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/home/feed` | `GET` | Returns the next page of the day plan: cards, reason codes, plan progress, streak, due count, and `next_cursor`. The payload never contains correct options or explanations. |
+| `/api/home/events` | `POST` | Batches scroll/interaction events (`dwell`, `skip`, `reveal`, `bookmark`, `report`, `teach_click`, `reflection`, and checkpoint events). Unknown event types are dropped. |
+| `/api/practice/attempts` | `POST` | Grades one card answer, updates BKT/Elo/scheduler state, and returns the explanation plus the next due time. Idempotent through `attempt_token`; reusing a token for a different card/item returns `409`. |
+| `/api/practice/progress` | `GET` | Mastery bands, due counts, and attempt totals grouped by subject. No answer keys. |
+| `/api/practice/teach` | `POST` | Creates a normal lesson thread with `origin = practice`, stores the practice brief on the thread, and returns a seed message. The browser then uses the existing `/api/chat/send` SSE route. |
+| `/api/practice/feedback` | `POST` | Reports an item as ambiguous, wrong, outdated, too easy, or too hard. Two open reports retire the item. |
+| `/api/practice/settings` | `POST` | Updates timezone, daily card goal, target retention, checkpoint preference, and difficulty preference. |
+| `/api/practice/reset` | `POST` | Requires `{"confirm": true}`; clears owner practice state, plans, attempts, events, and settings for that student. |
+
+Feature flags and defaults:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DOOMED_PRACTICE_ENGINE` | `0` | Exposes the practice API. |
+| `DOOMED_HOME_FEED` | `0` | Exposes the scrollable home view once it ships. |
+| `DOOMED_ITEM_GENERATION` | `0` | Allows background authoring/verification of items. |
+| `DOOMED_DAILY_CARDS` | `12` | Default daily plan size, adjustable per student (1–30). |
+| `DOOMED_TARGET_RETENTION` | `0.90` | Spaced-repetition target used by the scheduler (0.80–0.95). |
+| `DOOMED_LMS_PLUGIN` | `1` | Enables the built-in Indus LMS adapter. Set to `0` for a purely local build. |
+
+---
+
 ## 2. Agent tool reference
 
 The teacher agent has 12 specialized tools:
@@ -141,4 +169,17 @@ The agent takes at most 12 autonomous tool turns per user message. Three guards 
 
 - **Duplicate call suppression**: a tool call with an identical name and identical arguments is answered once. A repeat returns `{"status": "duplicate"}` and points the model at the earlier result.
 - **Prose before cards**: the teacher prompt requires a short lead-in paragraph before every `quiz` call, so the student reads the reason for the check before the card appears.
-- **Standalone LMS redirection**: when running without an active Indus LMS connection, `search_lms_files`, `browse_lms_folder`, and `confirm_lms_write` immediately return an informative fallback redirecting the agent to `search_ib_resources` without consuming unnecessary search cycles.
+- **Standalone LMS redirection**: when no school LMS plugin is connected, `search_lms_files`, `browse_lms_folder`, and `confirm_lms_write` immediately return an informative fallback redirecting the agent to `search_ib_resources` without consuming unnecessary search cycles.
+
+### 2.2 Optional LMS integration plugin
+
+School LMS support is an addon, not a core dependency. The boundary lives in **app/integrations/**:
+
+- **base.py** defines `LMSPlugin`, `LearningContext`, and integration errors.
+- **registry.py** resolves the active plugin for a session. With no plugin, it returns an empty local context.
+- **indus.py** wraps the existing **app/lms_bridge.py** as the built-in Indus adapter. The bridge is unchanged for compatibility; it is now reached through the registry.
+- **/api/integrations** returns the installed plugins and whether the current session is connected. It never returns tokens.
+
+The practice engine imports no LMS module. Login, profile sync, LMS file search, folder browsing, and write confirmation resolve a plugin through the registry and degrade to standalone study when none is connected. `DOOMED_LMS_PLUGIN=0` or a missing upstream package disables the adapter without affecting local study.
+
+Legacy compatibility: `/api/study` and the chat-turn triage still call the bridge directly. They are scheduled to move to the practice-first local context; the feed does not depend on them.

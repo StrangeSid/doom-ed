@@ -32,16 +32,12 @@ except ImportError:
 
 from app import cache
 from app.db import Database
+from app.integrations.base import (
+    IntegrationNotConnectedError as LMSNotAuthenticatedError,
+    IntegrationUpstreamError as LMSUpstreamError,
+)
 from app.security import WriteConfirmationManager, assert_not_live_test
 from app.sessions import Session, SessionStore, _extract_jwt_uid
-
-
-class LMSNotAuthenticatedError(Exception):
-    """Raised when an operation requires an active Indus LMS session but none exists."""
-
-
-class LMSUpstreamError(Exception):
-    """Raised when an Indus LMS upstream API call fails."""
 
 
 def _ensure_lms_module():

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- Adaptive practice engine foundation behind `DOOMED_PRACTICE_ENGINE`: skill and item schema, deterministic planner, BKT/Elo mastery updates, FSRS-lite scheduling, owner-scoped attempt ledger, daily feed plans, and the feed/attempt/event/progress/teach API.
+- Optional LMS integration plugin layer in `app/integrations/`. The existing Indus bridge is wrapped as the built-in adapter; local study and the practice engine work with no plugin installed. `GET /api/integrations` reports plugin availability and connection state.
+- Practice tests covering grading, scheduling, planner constraints, owner isolation, API flow, migrations, and the plugin boundary.
+
+### Changed
+- Login, profile sync, and the teacher's LMS tools resolve an integration plugin instead of calling the bridge directly.
+- Thread creation now records `origin` and `origin_json`, so a lesson can carry the practice evidence that opened it.
+- The unit/integration suite is now 176 tests; all pass with the practice flag off and on.
+
+### Security
+- Practice answer keys are Fernet-encrypted at rest and never included in feed responses. Attempt grading is owner-scoped and idempotent.
+
+---
+
 ## [0.1.2] - 2026-10-22
 
 ### Fixed

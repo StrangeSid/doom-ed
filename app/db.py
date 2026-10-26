@@ -16,8 +16,9 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from app.config import DATA_DIR, DOOMED_DB_PATH, ensure_data_dir
 from app.security import Cipher
@@ -165,6 +166,8 @@ class Database:
                     subject TEXT,
                     phase TEXT NOT NULL DEFAULT 'probe',
                     dependency_map TEXT,
+                    origin TEXT NOT NULL DEFAULT 'manual',
+                    origin_json TEXT,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 );
@@ -228,11 +231,251 @@ class Database:
                     answered INTEGER NOT NULL DEFAULT 0,
                     user_answer_json TEXT,
                     grade_result_json TEXT,
+                    skill_ids_json TEXT,
+                    item_id TEXT,
+                    source TEXT NOT NULL DEFAULT 'lesson',
                     created_at REAL NOT NULL
+                );
+
+                -- --- Adaptive practice (additive, feature-flagged) ---------
+
+                CREATE TABLE IF NOT EXISTS skills (
+                    id TEXT PRIMARY KEY,
+                    subject TEXT NOT NULL,
+                    level TEXT,
+                    unit TEXT,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    ib_code TEXT,
+                    prereq_ids_json TEXT NOT NULL DEFAULT '[]',
+                    exam_weight REAL NOT NULL DEFAULT 1.0,
+                    source_kind TEXT,
+                    source_ref TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_skills_subject
+                    ON skills (subject, level);
+
+                CREATE TABLE IF NOT EXISTS items (
+                    id TEXT PRIMARY KEY,
+                    owner TEXT,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    skill_ids_json TEXT NOT NULL,
+                    format TEXT NOT NULL,
+                    stem TEXT NOT NULL,
+                    options_json TEXT,
+                    solution_enc BLOB NOT NULL,
+                    difficulty REAL NOT NULL DEFAULT 0.0,
+                    discrimination REAL NOT NULL DEFAULT 1.0,
+                    guessing REAL NOT NULL DEFAULT 0.25,
+                    source_kind TEXT NOT NULL,
+                    source_ref TEXT,
+                    source_sha256 TEXT,
+                    verification TEXT NOT NULL DEFAULT 'draft',
+                    model TEXT,
+                    prompt_version TEXT,
+                    content_hash TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    retired_at REAL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_items_owner_verification
+                    ON items (owner, verification);
+                CREATE INDEX IF NOT EXISTS idx_items_content_hash
+                    ON items (content_hash);
+
+                CREATE TABLE IF NOT EXISTS item_stats (
+                    item_id TEXT PRIMARY KEY,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    correct INTEGER NOT NULL DEFAULT 0,
+                    updated_at REAL NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS student_skill_state (
+                    owner TEXT NOT NULL,
+                    skill_id TEXT NOT NULL,
+                    ability REAL NOT NULL DEFAULT 0.0,
+                    mastery REAL NOT NULL DEFAULT 0.35,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    correct INTEGER NOT NULL DEFAULT 0,
+                    unknowns INTEGER NOT NULL DEFAULT 0,
+                    streak INTEGER NOT NULL DEFAULT 0,
+                    stability REAL NOT NULL DEFAULT 1.0,
+                    due_at REAL,
+                    last_seen REAL,
+                    checkpoint_eligible INTEGER NOT NULL DEFAULT 0,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY (owner, skill_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_skill_state_due
+                    ON student_skill_state (owner, due_at);
+                CREATE INDEX IF NOT EXISTS idx_skill_state_mastery
+                    ON student_skill_state (owner, mastery);
+
+                CREATE TABLE IF NOT EXISTS practice_attempts (
+                    id TEXT PRIMARY KEY,
+                    owner TEXT NOT NULL,
+                    attempt_token TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    item_version INTEGER NOT NULL,
+                    skill_ids_json TEXT NOT NULL,
+                    selected_json TEXT,
+                    correct INTEGER NOT NULL DEFAULT 0,
+                    dont_know INTEGER NOT NULL DEFAULT 0,
+                    latency_ms INTEGER,
+                    confidence INTEGER,
+                    source TEXT NOT NULL,
+                    thread_id TEXT,
+                    card_id TEXT,
+                    explanation_shown INTEGER NOT NULL DEFAULT 0,
+                    planner_reason TEXT,
+                    result_json TEXT,
+                    created_at REAL NOT NULL,
+                    UNIQUE (owner, attempt_token)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_attempts_owner_created
+                    ON practice_attempts (owner, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_attempts_owner_item
+                    ON practice_attempts (owner, item_id);
+
+                CREATE TABLE IF NOT EXISTS feed_plans (
+                    id TEXT PRIMARY KEY,
+                    owner TEXT NOT NULL,
+                    day TEXT NOT NULL,
+                    timezone TEXT NOT NULL,
+                    goal_cards INTEGER NOT NULL,
+                    state TEXT NOT NULL DEFAULT 'active',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    UNIQUE (owner, day)
+                );
+
+                CREATE TABLE IF NOT EXISTS feed_cards (
+                    id TEXT PRIMARY KEY,
+                    plan_id TEXT NOT NULL,
+                    owner TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    item_id TEXT,
+                    checkpoint_id TEXT,
+                    skill_ids_json TEXT NOT NULL DEFAULT '[]',
+                    reason_code TEXT,
+                    reason_text TEXT,
+                    state TEXT NOT NULL DEFAULT 'pending',
+                    attempt_id TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    UNIQUE (plan_id, position)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_feed_cards_owner_state
+                    ON feed_cards (owner, state);
+                CREATE INDEX IF NOT EXISTS idx_feed_cards_plan_position
+                    ON feed_cards (plan_id, position);
+
+                CREATE TABLE IF NOT EXISTS feed_events (
+                    id TEXT PRIMARY KEY,
+                    owner TEXT NOT NULL,
+                    plan_id TEXT,
+                    card_id TEXT,
+                    event_type TEXT NOT NULL,
+                    value_json TEXT,
+                    created_at REAL NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_feed_events_owner_created
+                    ON feed_events (owner, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS checkpoint_runs (
+                    id TEXT PRIMARY KEY,
+                    owner TEXT NOT NULL,
+                    plan_id TEXT,
+                    skill_ids_json TEXT NOT NULL,
+                    item_ids_json TEXT NOT NULL,
+                    state TEXT NOT NULL DEFAULT 'open',
+                    score INTEGER,
+                    total INTEGER,
+                    time_limit_s INTEGER,
+                    started_at REAL NOT NULL,
+                    submitted_at REAL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_checkpoint_owner
+                    ON checkpoint_runs (owner, started_at DESC);
+
+                CREATE TABLE IF NOT EXISTS checkpoint_answers (
+                    checkpoint_id TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    selected_json TEXT,
+                    correct INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (checkpoint_id, item_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS item_reports (
+                    id TEXT PRIMARY KEY,
+                    owner TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    note TEXT,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    created_at REAL NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_item_reports_item
+                    ON item_reports (item_id, status);
+
+                CREATE TABLE IF NOT EXISTS owner_settings (
+                    owner TEXT PRIMARY KEY,
+                    timezone TEXT NOT NULL DEFAULT 'UTC',
+                    daily_cards INTEGER NOT NULL DEFAULT 12,
+                    target_retention REAL NOT NULL DEFAULT 0.90,
+                    focus_subjects_json TEXT,
+                    checkpoints_enabled INTEGER NOT NULL DEFAULT 1,
+                    difficulty_pref TEXT NOT NULL DEFAULT 'balanced',
+                    updated_at REAL NOT NULL
                 );
                 """
             )
+            # Additive migrations for databases created before the practice
+            # columns existed. SQLite has no ADD COLUMN IF NOT EXISTS.
+            for table, column, ddl in (
+                ("threads", "origin", "TEXT NOT NULL DEFAULT 'manual'"),
+                ("threads", "origin_json", "TEXT"),
+                ("quiz_states", "skill_ids_json", "TEXT"),
+                ("quiz_states", "item_id", "TEXT"),
+                ("quiz_states", "source", "TEXT NOT NULL DEFAULT 'lesson'"),
+                ("practice_attempts", "result_json", "TEXT"),
+            ):
+                self._ensure_column(table, column, ddl)
             self._conn.commit()
+
+    def _ensure_column(self, table: str, column: str, ddl: str) -> None:
+        """Add a column to an existing table once. Table/column names are internal."""
+        with self._lock:
+            columns = {
+                str(row["name"])
+                for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if column not in columns:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+                self._conn.commit()
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Hold the connection lock for a multi-statement transaction."""
+        with self._lock:
+            try:
+                yield self._conn
+            except Exception:
+                self._conn.rollback()
+                raise
+            else:
+                self._conn.commit()
 
     def execute(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> sqlite3.Cursor:
         with self._lock:
@@ -736,6 +979,8 @@ class Database:
         phase: str = "probe",
         dependency_map: str | dict[str, Any] | list[Any] | None = None,
         thread_id: str | None = None,
+        origin: str = "manual",
+        origin_json: str | dict[str, Any] | list[Any] | None = None,
     ) -> dict[str, Any]:
         owner_clean = (owner or "").strip()
         if not owner_clean:
@@ -743,12 +988,26 @@ class Database:
         tid = thread_id or uuid.uuid4().hex
         now = time.time()
         dep_json = _json_dumps_or_none(dependency_map)
+        origin_payload = _json_dumps_or_none(origin_json)
         with self._lock:
             self._conn.execute(
                 """INSERT INTO threads (
-                       id, owner, title, topic, subject, phase, dependency_map, created_at, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (tid, owner_clean, title, topic, subject, phase, dep_json, now, now),
+                       id, owner, title, topic, subject, phase, dependency_map,
+                       origin, origin_json, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    tid,
+                    owner_clean,
+                    title,
+                    topic,
+                    subject,
+                    phase,
+                    dep_json,
+                    origin or "manual",
+                    origin_payload,
+                    now,
+                    now,
+                ),
             )
             self._conn.commit()
         return self.get_thread(owner_clean, tid) or {}
@@ -1022,17 +1281,22 @@ class Database:
         *,
         explanation: str = "",
         multi_select: bool | int = 0,
+        skill_ids: list[Any] | str | None = None,
+        item_id: str | None = None,
+        source: str = "lesson",
     ) -> dict[str, Any]:
         now = time.time()
         opts_json = _json_dumps_or_none(options) or "[]"
         corr_json = _json_dumps_or_none(correct) or "[]"
+        skills_json = _json_dumps_or_none(skill_ids) or "[]"
         with self._lock:
             self._conn.execute(
                 """INSERT OR REPLACE INTO quiz_states (
                        call_id, thread_id, owner, question, options_json,
                        correct_json, explanation, multi_select, answered,
-                       user_answer_json, grade_result_json, created_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?)""",
+                       user_answer_json, grade_result_json, skill_ids_json,
+                       item_id, source, created_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?, ?, ?, ?)""",
                 (
                     call_id,
                     thread_id,
@@ -1042,6 +1306,9 @@ class Database:
                     corr_json,
                     explanation,
                     1 if multi_select else 0,
+                    skills_json,
+                    item_id,
+                    source or "lesson",
                     now,
                 ),
             )

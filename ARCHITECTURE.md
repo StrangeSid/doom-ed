@@ -112,6 +112,19 @@ The personal mode auto-bootstraps a session from `~/.induslms_token.json` on sta
 
 A fully hosted version with real multi-user auth is a later milestone. The storage layout is already shaped for it: the same `owner` key that separates two students on one laptop becomes the tenant key in a hosted deployment, and the local SQLite files become per-user rows.
 
+### 2.2 Optional LMS integration boundary
+
+School LMS support is an addon, not a core dependency. The boundary lives in `app/integrations/`:
+
+- `base.py` defines `LMSPlugin`, `LearningContext`, and integration errors.
+- `registry.py` resolves the active plugin for a session. With no plugin, it returns an empty local context.
+- `indus.py` wraps the existing `app/lms_bridge.py` as the built-in Indus adapter. The bridge remains compatible, but it is reached through the registry.
+- The practice engine (`app/practice/`) imports no LMS module. Feed planning, attempts, scheduling, and progress work with zero plugins.
+- Login, profile sync, LMS file search, folder browsing, and confirmed writes resolve a plugin through the registry. When no plugin is connected they return the standalone fallback.
+- `GET /api/integrations` reports plugin availability and connection state without exposing tokens. `DOOMED_LMS_PLUGIN=0` disables the built-in adapter.
+
+The legacy `/api/study` route and chat-turn triage still call the bridge directly as a compatibility path. They are scheduled to move to the practice-first local context; the home feed does not depend on them. The invariant is simple: removing the plugin must not break local study.
+
 ---
 
 ## 3. Deployment blueprint

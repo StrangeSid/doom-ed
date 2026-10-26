@@ -24,7 +24,7 @@ from typing import Any, AsyncGenerator, Callable, Dict, Generator, Iterator, Lis
 
 import requests
 
-from app import config, file_reader, ib_client, lms_bridge, prompts, research
+from app import config, file_reader, ib_client, integrations, prompts, research
 from app.db import Database
 from app.security import WriteConfirmationManager, assert_not_live_test, sanitize_filename
 from app.sessions import Session
@@ -650,19 +650,20 @@ class Orchestrator:
 
                 # C. WRITE CONFIRM CARD (PAUSES LOOP)
                 elif fn_name == "confirm_lms_write":
-                    if not getattr(session, "is_lms_authenticated", False):
+                    plugin = integrations.active_plugin(session)
+                    if plugin is None:
                         yield self._append_tool_result(
                             llm_messages,
                             thread_id,
                             call_id,
-                            {"status": "lms_not_connected", "message": "Indus LMS is not connected. School writes cannot be performed in standalone IB mode."},
+                            {"status": "lms_not_connected", "message": "No school LMS plugin is connected. School writes cannot be performed in standalone IB mode."},
                             fn_name,
                         )
                     else:
                         action = fn_args.get("action", "")
                         payload = fn_args.get("payload", {})
                         reason = fn_args.get("reason", "")
-                        tok_dict = lms_bridge.request_write_confirmation(
+                        tok_dict = plugin.confirm_write(
                             self.write_mgr, session, action, payload
                         )
                         card_data = {
@@ -694,12 +695,13 @@ class Orchestrator:
 
                 # E. SEARCH LMS FILES
                 elif fn_name == "search_lms_files":
-                    if not getattr(session, "is_lms_authenticated", False):
+                    plugin = integrations.active_plugin(session)
+                    if plugin is None:
                         yield self._append_tool_result(
                             llm_messages,
                             thread_id,
                             call_id,
-                            {"status": "lms_not_connected", "message": "Indus LMS is not connected. Student is studying independently with the IB resource catalog. Use search_ib_resources to find past papers and markschemes."},
+                            {"status": "lms_not_connected", "message": "No school LMS plugin is connected. Student is studying independently with the IB resource catalog. Use search_ib_resources to find past papers and markschemes."},
                             fn_name,
                         )
                     else:
@@ -707,25 +709,26 @@ class Orchestrator:
                         sub = fn_args.get("subject")
                         ext = fn_args.get("ext")
                         lim = _clamp_int(fn_args.get("limit", 10), 1, 25)
-                        res = lms_bridge.search_files(session, self.db, q, subject=sub, ext=ext, limit=lim)
+                        res = plugin.search_files(session, self.db, q, subject=sub, ext=ext, limit=lim)
                         yield self._append_tool_result(
                             llm_messages, thread_id, call_id, _slim_file_rows(res), fn_name
                         )
 
                 # F. BROWSE LMS FOLDER
                 elif fn_name == "browse_lms_folder":
-                    if not getattr(session, "is_lms_authenticated", False):
+                    plugin = integrations.active_plugin(session)
+                    if plugin is None:
                         yield self._append_tool_result(
                             llm_messages,
                             thread_id,
                             call_id,
-                            {"status": "lms_not_connected", "message": "Indus LMS is not connected. Use search_ib_resources to find official past papers and curriculum guides."},
+                            {"status": "lms_not_connected", "message": "No school LMS plugin is connected. Use search_ib_resources to find official past papers and curriculum guides."},
                             fn_name,
                         )
                     else:
                         cid = fn_args.get("course_id")
                         fid = fn_args.get("folder_id")
-                        res = lms_bridge.browse_lms_folder(session, self.db, course_id=cid, folder_id=fid)
+                        res = plugin.browse_folder(session, self.db, course_id=cid, folder_id=fid)
                         yield self._append_tool_result(llm_messages, thread_id, call_id, res, fn_name)
 
                 # G. SEARCH IB RESOURCES
@@ -993,7 +996,14 @@ class Orchestrator:
         # 2. WRITE CONFIRMATION SUBMISSION
         if "confirm" in reply_data:
             if reply_data.get("confirm") is True:
-                write_res = lms_bridge.execute_confirmed_write(
+                plugin = integrations.active_plugin(session)
+                if plugin is None:
+                    return {
+                        "status": "error",
+                        "card_type": "write_confirm",
+                        "message": "No school LMS plugin is connected.",
+                    }
+                write_res = plugin.execute_write(
                     self.write_mgr, session, card_id
                 )
                 self.db.add_message(

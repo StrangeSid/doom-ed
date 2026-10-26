@@ -45,9 +45,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse  # type: ignore
 
-from app import cache, config, file_reader, ib_client, lms_bridge
+from app import cache, config, file_reader, ib_client, integrations, lms_bridge
 from app.db import Database
 from app.orchestrator import Orchestrator
+from app.practice import config as practice_config
+from app.practice.api import configure as configure_practice_api
+from app.practice.api import router as practice_router
+from app.practice.service import PracticeService
 from app.security import Cipher, WriteConfirmationManager
 from app.sessions import Session, SessionStore, create_local_session, import_local_indus_token
 
@@ -86,6 +90,7 @@ cache.set_store(session_store)
 db = Database(DATA_DIR / "doomed.sqlite")
 write_mgr = WriteConfirmationManager()
 orchestrator = Orchestrator(db=db, write_mgr=write_mgr)
+practice_service = PracticeService(db)
 
 
 @app.get("/health")
@@ -110,6 +115,14 @@ def _is_loopback(request: Request) -> bool:
     return host in ("127.0.0.1", "::1", "localhost")
 
 
+def _feature_flags() -> dict[str, bool]:
+    """Flags the shell uses to decide whether to offer the home feed."""
+    return {
+        "practice_engine": practice_config.practice_engine_enabled(),
+        "home_feed": practice_config.home_feed_enabled(),
+    }
+
+
 def get_current_session(request: Request, doomed_sid: str | None = Cookie(None)) -> Session:
     """Retrieve the authenticated session.
 
@@ -127,6 +140,11 @@ def get_current_session(request: Request, doomed_sid: str | None = Cookie(None))
             detail="Authentication required. Please sign in to Indus LMS.",
         )
     return sess
+
+
+# The practice router does not import the app module. Main injects the session
+# resolver once, which keeps the practice engine independent of auth and LMS.
+configure_practice_api(practice_service, get_current_session)
 
 
 # --- Auth Routes -------------------------------------------------------------
@@ -174,6 +192,7 @@ def start_local_session(
     )
     return {
         "status": "ok",
+        "features": _feature_flags(),
         "student": {
             "name": sess.name,
             "email": sess.email,
@@ -208,6 +227,7 @@ def update_profile(
     session_store.save(sess)
     return {
         "status": "ok",
+        "features": _feature_flags(),
         "student": {
             "name": sess.name,
             "email": sess.email,
@@ -225,9 +245,19 @@ def update_profile(
 
 @app.post("/api/login")
 def login(body: LoginRequest, response: Response) -> dict[str, Any]:
-    """Authenticate with Indus LMS credentials and set HttpOnly session cookie."""
+    """Authenticate through the optional school LMS plugin.
+
+    Local study does not require this route. If no LMS plugin is installed or
+    enabled, the student can still start an independent session.
+    """
+    plugin = integrations.get("indus")
+    if plugin is None or not plugin.is_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The school LMS integration is not installed or enabled.",
+        )
     try:
-        sess = lms_bridge.login_indus(session_store, body.email, body.password)
+        sess = plugin.authenticate(session_store, body.email, body.password)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
 
@@ -241,6 +271,7 @@ def login(body: LoginRequest, response: Response) -> dict[str, Any]:
     )
     return {
         "status": "ok",
+        "features": _feature_flags(),
         "student": {
             "name": sess.name,
             "email": sess.email,
@@ -295,19 +326,24 @@ def session_info(
     }
     profile_error: str | None = None
     if getattr(sess, "is_lms_authenticated", False):
-        try:
-            payload = lms_bridge.fetch_student_payload(sess, session_store, refresh=False)
-            if isinstance(payload.get("student"), dict):
-                student_info.update(payload["student"])
-            if payload.get("_auth_error"):
-                profile_error = payload["_auth_error"]
-        except lms_bridge.LMSNotAuthenticatedError as e:
-            profile_error = str(e)
-        except Exception as e:
-            profile_error = str(e)
+        plugin = integrations.active_plugin(sess)
+        if plugin is None:
+            profile_error = "The school LMS integration is disabled. Local study still works."
+        else:
+            try:
+                payload = plugin.fetch_profile(sess, session_store)
+                if isinstance(payload.get("student"), dict):
+                    student_info.update(payload["student"])
+                if payload.get("_auth_error"):
+                    profile_error = payload["_auth_error"]
+            except integrations.IntegrationNotConnectedError as e:
+                profile_error = str(e)
+            except Exception as e:
+                profile_error = str(e)
 
     body: dict[str, Any] = {
         "status": "ok",
+        "features": _feature_flags(),
         "student": student_info,
     }
     if profile_error:
@@ -819,6 +855,27 @@ def update_settings(
         persist=True,
     )
     return {"status": "ok", "config": _public_config(config.get_llm_config())}
+
+
+# --- Optional integrations ---------------------------------------------------
+
+
+@app.get("/api/integrations")
+def integration_status(
+    request: Request,
+    doomed_sid: str | None = Cookie(None),
+) -> dict[str, Any]:
+    """List optional addons and whether this session is connected to each.
+
+    An empty list is normal: the local study feed works without any plugin.
+    """
+    sess = get_current_session(request, doomed_sid)
+    return {"status": "ok", "plugins": integrations.status(sess)}
+
+
+# --- Practice API ------------------------------------------------------------
+
+app.include_router(practice_router)
 
 
 # --- Mount Frontend ----------------------------------------------------------

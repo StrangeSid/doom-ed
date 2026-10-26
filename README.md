@@ -124,8 +124,8 @@ Open `http://127.0.0.1:8000`:
 ## Testing
 
 ```bash
-# Run full unit and integration suite (159 tests)
-pytest
+# Run unit and integration suite (176 tests; browser suite separate)
+pytest --ignore=tests/test_e2e_playwright.py
 
 # Run Playwright browser tests
 pytest tests/test_e2e_playwright.py tests/test_frontend_xss.py
@@ -140,6 +140,8 @@ doom-ed/
 ├── app/
 │   ├── main.py              # FastAPI server, SSE stream, viewer endpoints
 │   ├── orchestrator.py      # Socratic teaching loop & card state machine
+│   ├── practice/            # Adaptive practice engine, planner, feed API
+│   ├── integrations/        # Optional LMS plugin boundary (Indus adapter)
 │   ├── lms_bridge.py        # Live Indus LMS client, triage builder, crawler
 │   ├── file_reader.py       # Blob storage, PyMuPDF + Office parsers, vision rasterizer
 │   ├── ib_client.py         # IB catalog search & paper-markscheme pairing
@@ -163,7 +165,7 @@ doom-ed/
 ├── docs/
 │   └── assets/
 │       └── homepage.png     # Live UI screenshot
-├── tests/                   # 155 unit, security, and Playwright tests
+├── tests/                   # 176 unit/security/integration tests + Playwright
 ├── ARCHITECTURE.md          # Deployment & cloud architecture
 ├── DOCS.md                  # Detailed API & tool reference
 ├── CONTRIBUTING.md          # Contributing guidelines
