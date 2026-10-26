@@ -463,6 +463,28 @@ def test_practice_api_requires_flag_and_supports_flow(monkeypatch):
     main.db.execute("DELETE FROM skills WHERE id = ?", ("api.kin",))
 
 
+def test_session_exposes_practice_and_home_flags(monkeypatch):
+    import app.main as main
+
+    monkeypatch.setenv("DOOMED_PRACTICE_ENGINE", "1")
+    monkeypatch.setenv("DOOMED_HOME_FEED", "1")
+    client = TestClient(main.app)
+    created = client.post(
+        "/api/session/local",
+        json={
+            "name": "Flag Tester",
+            "grade": "DP 2",
+            "subjects": ["Physics HL"],
+            "target_session": "May 2027",
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["features"] == {"practice_engine": True, "home_feed": True}
+    session_info = client.get("/api/session")
+    assert session_info.status_code == 200
+    assert session_info.json()["features"] == {"practice_engine": True, "home_feed": True}
+
+
 def test_login_is_unavailable_without_the_lms_plugin(monkeypatch):
     import app.main as main
 

@@ -274,6 +274,51 @@ img, svg, video { max-width: 100%; }
   background: var(--surface);
 }
 
+/* main-stage holds the two center views (#/home feed and #/lesson chat) in the
+   second grid column. Only one view is un-hidden at a time; app.js sets
+   data-view and the hidden/aria-hidden attributes. */
+.main-stage {
+  grid-column: 2;
+  position: relative;
+  min-width: 0;
+  height: 100dvh;
+  overflow: hidden;
+}
+.main-stage > .home-view,
+.main-stage > .pane-center { height: 100dvh; }
+.app-shell.left-collapsed .main-stage { grid-column: 1; }
+
+/* Small view switch used by both the home header and the lesson header. */
+.view-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.view-tab {
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.3;
+  transition: background 0.15s, color 0.15s;
+}
+.view-tab:hover { color: var(--ink); background: var(--surface-3); }
+.view-tab[aria-current="page"] {
+  background: var(--surface);
+  color: var(--brand-ink);
+  box-shadow: var(--shadow);
+}
+.view-tab.compact { padding: 4px 10px; font-size: 11.5px; }
+.chat-view-switch { margin-left: 2px; }
+
 /* ----------------------------------------------------------- sidebar: brand */
 .brand-row { display: flex; align-items: center; gap: 11px; padding: 2px 4px 0; }
 .brand-mark {
@@ -1525,6 +1570,7 @@ img, svg, video { max-width: 100%; }
 @media (max-width: 1080px) {
   .app-shell { grid-template-columns: 1fr; }
   .pane-center { grid-column: 1; }
+  .main-stage { grid-column: 1; }
   /* The wide-screen collapse class must never hide the overlay pane. */
   .app-shell.left-collapsed .pane-left { display: flex; }
   .pane-left {
@@ -1540,6 +1586,9 @@ img, svg, video { max-width: 100%; }
 @media (max-width: 720px) {
   .chat-header { min-height: 56px; padding: 10px 12px; gap: 8px; }
   .chat-heading h1 { font-size: 17px; max-width: 24ch; }
+  .chat-view-switch { margin-left: 0; }
+  /* On a phone the lesson view already is "Lessons"; keep Home reachable. */
+  .chat-view-switch #chat-nav-lessons { display: none; }
   .attached-tray { max-width: 30%; }
   .message-list { gap: 14px; padding: 14px 12px 10px; }
   .msg { max-width: 100%; }

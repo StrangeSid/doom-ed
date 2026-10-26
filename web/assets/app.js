@@ -6,6 +6,7 @@
  */
 
 import { renderQuizCard, renderAskCard, renderWriteConfirmCard, renderVisualCard } from "./cards.js";
+import { initHome } from "./home.js";
 import { LessonLog } from "./log-export.js";
 import { renderMarkdown } from "./renderer.js";
 import { openViewer, closeViewer } from "./viewer.js";
@@ -19,6 +20,9 @@ let activeLog = new LessonLog();
 let pendingAttachments = []; // files staged for next user send
 let activeCitation = null; // { ref, filename, page }
 let isStreaming = false;
+let currentView = "lesson"; // "home" | "lesson" (hash router, see showView)
+let features = { practice_engine: false, home_feed: false };
+let home = null; // home.js controller, initialized after the vendor loader
 
 // --- DOM References ----------------------------------------------------------
 const $ = (id) => document.getElementById(id);
@@ -133,6 +137,12 @@ const loginClose = $("login-close");
 
 const toasts = $("toasts");
 
+const mainStage = $("main-stage");
+const homeView = $("home-view");
+const centerPane = $("center-pane");
+const homeSidebarToggle = $("home-sidebar-toggle");
+const viewTabs = Array.from(document.querySelectorAll(".view-tab[data-view]"));
+
 // --- Theme -------------------------------------------------------------------
 const THEME_KEY = "doomed.theme";
 
@@ -196,6 +206,7 @@ function setSidebarOpen(open) {
   appShell.classList.toggle("left-collapsed", !narrow && !open);
   scrim.classList.toggle("show", narrow && open);
   leftToggle.setAttribute("aria-expanded", String(Boolean(open)));
+  if (homeSidebarToggle) homeSidebarToggle.setAttribute("aria-expanded", String(Boolean(open)));
   const label = open ? "Hide study triage panel" : "Show study triage panel";
   leftToggle.setAttribute("aria-label", label);
   leftToggle.title = label;
@@ -212,6 +223,9 @@ function syncSidebar() {
 }
 
 leftToggle.addEventListener("click", () => setSidebarOpen(!sidebarOpen()));
+if (homeSidebarToggle) {
+  homeSidebarToggle.addEventListener("click", () => setSidebarOpen(!sidebarOpen()));
+}
 if (sidebarCollapseBtn) {
   sidebarCollapseBtn.addEventListener("click", () => setSidebarOpen(false));
 }
@@ -223,6 +237,193 @@ document.addEventListener("keydown", (e) => {
     setSidebarOpen(false);
   }
 });
+
+// --- View routing (home feed ↔ lesson) ---------------------------------------
+// Deliberately small hash router: #/home and #/lesson[/<thread_id>]. It keeps
+// the zero-build constraint and means reloads/back-forward land on the same
+// view. showView() is the one place that flips hidden/aria-hidden and the nav
+// aria-current flags.
+
+function readFeatures(payload) {
+  const raw = payload && payload.features;
+  if (!raw || typeof raw !== "object") return;
+  features = {
+    practice_engine: Boolean(raw.practice_engine),
+    home_feed: Boolean(raw.home_feed),
+  };
+}
+
+function homeAvailable() {
+  return Boolean(currentSession && features.home_feed);
+}
+
+function syncNav() {
+  const homeEnabled = homeAvailable();
+  for (const button of viewTabs) {
+    const isHome = button.dataset.view === "home";
+    if (isHome) button.hidden = !homeEnabled;
+    if (button.dataset.view === currentView) {
+      button.setAttribute("aria-current", "page");
+    } else {
+      button.removeAttribute("aria-current");
+    }
+  }
+  if (mainStage) mainStage.dataset.view = currentView;
+}
+
+function viewHash(view, threadId) {
+  if (view === "home") return "#/home";
+  return threadId ? `#/lesson/${encodeURIComponent(threadId)}` : "#/lesson";
+}
+
+function replaceViewHash(hash) {
+  if (location.hash === hash) return;
+  try {
+    history.replaceState(null, "", hash);
+  } catch (e) {
+    location.hash = hash;
+  }
+}
+
+function pushViewHash(hash) {
+  if (location.hash === hash) return;
+  try {
+    history.pushState(null, "", hash);
+  } catch (e) {
+    location.hash = hash;
+  }
+}
+
+/**
+ * Show the home feed or the existing chat. Home is only ever entered when the
+ * server flag and a session allow it; "lesson" is always a safe fallback.
+ */
+function showView(view, options = {}) {
+  const next = view === "home" && homeAvailable() ? "home" : "lesson";
+  const previous = currentView;
+  currentView = next;
+
+  if (homeView) {
+    homeView.hidden = next !== "home";
+    homeView.setAttribute("aria-hidden", next === "home" ? "false" : "true");
+  }
+  if (centerPane) {
+    centerPane.hidden = next !== "lesson";
+    centerPane.setAttribute("aria-hidden", next === "lesson" ? "false" : "true");
+  }
+  syncNav();
+
+  if (next === "home") {
+    if (home) home.activate();
+  } else if (previous === "home" && home) {
+    home.deactivate();
+  }
+
+  if (options.updateHash !== false) {
+    pushViewHash(viewHash(next, next === "lesson" ? options.threadId || null : null));
+  }
+  return next;
+}
+
+function routeFromHash() {
+  if (!currentSession) {
+    showView("lesson", { updateHash: false });
+    return;
+  }
+  const hash = location.hash || "";
+  const lessonMatch = /^#\/lesson\/([^/?#]+)/.exec(hash);
+  if (lessonMatch) {
+    showView("lesson", { updateHash: false });
+    let threadId = lessonMatch[1];
+    try {
+      threadId = decodeURIComponent(threadId);
+    } catch (e) {
+      /* keep the encoded value */
+    }
+    if (threadId && threadId !== currentThreadId) {
+      switchThread(threadId, { updateHash: false });
+    }
+    return;
+  }
+  if (hash === "#/lesson") {
+    showView("lesson", { updateHash: false });
+    return;
+  }
+  if (hash === "#/home") {
+    showView(homeAvailable() ? "home" : "lesson", { updateHash: false });
+    return;
+  }
+  const fallback = homeAvailable() ? "home" : "lesson";
+  showView(fallback, { updateHash: false });
+  replaceViewHash(viewHash(fallback));
+}
+
+/** Pick the landing view after sign-in, a reload, or an OAuth return. */
+function enterApp() {
+  if (!currentSession) {
+    showView("lesson", { updateHash: false });
+    syncNav();
+    return;
+  }
+  const hash = location.hash || "";
+  if (hash.indexOf("#/lesson") === 0 || hash === "#/home") {
+    routeFromHash();
+    return;
+  }
+  const fallback = homeAvailable() ? "home" : "lesson";
+  showView(fallback, { updateHash: false });
+  replaceViewHash(viewHash(fallback));
+}
+
+window.addEventListener("popstate", routeFromHash);
+window.addEventListener("hashchange", routeFromHash);
+
+for (const button of viewTabs) {
+  button.addEventListener("click", () => {
+    const view = button.dataset.view === "home" ? "home" : "lesson";
+    if (view === "home" && !homeAvailable()) return;
+    showView(view, { threadId: view === "lesson" ? currentThreadId : null });
+  });
+}
+
+/**
+ * Feed → lesson handoff. /api/practice/teach has already created a normal
+ * thread with a server-authored practice brief. This only navigates, loads the
+ * thread, seeds the composer, and sends through the existing SSE path.
+ */
+async function teachFromPractice(payload) {
+  if (!payload || !payload.threadId) return;
+  showView("lesson", { threadId: payload.threadId });
+  await switchThread(payload.threadId, { updateHash: false });
+  promptInput.value = payload.seedMessage || "Teach me this.";
+  promptInput.dispatchEvent(new Event("input"));
+  if (isNarrow()) setSidebarOpen(false);
+  promptInput.focus();
+  await sendMessage();
+}
+
+function initHomeController() {
+  home = initHome({
+    getStudent: () => currentSession,
+    hasSession: () => Boolean(currentSession),
+    showToast,
+    onTeach: teachFromPractice,
+    onUnauthorized: () =>
+      promptReauth("Your session expired. Sign in again to load your plan."),
+    onSignIn: () => {
+      loginError.hidden = true;
+      loginModal.showModal();
+    },
+    onStartLocal: () => startLocalSession(),
+    onLessons: () => showView("lesson", { threadId: currentThreadId }),
+    onDisabled: () => {
+      showToast("Home feed is not enabled on this server.", "info");
+      showView("lesson", { updateHash: false });
+      replaceViewHash("#/lesson");
+    },
+  });
+}
+
 
 // --- Toast Helper ------------------------------------------------------------
 function showToast(message, type = "info") {
@@ -269,6 +470,7 @@ async function checkAuth() {
     const res = await fetch("/api/session");
     if (res.ok) {
       const data = await res.json();
+      readFeatures(data);
       currentSession = data.student;
       renderProfile();
       if (data.profile_error) {
@@ -276,13 +478,16 @@ async function checkAuth() {
       }
       loadTriage();
       loadThreads();
+      enterApp();
     } else {
       currentSession = null;
       renderProfile();
+      showView("lesson", { updateHash: false });
     }
   } catch (e) {
     currentSession = null;
     renderProfile();
+    showView("lesson", { updateHash: false });
   }
 }
 
@@ -313,32 +518,42 @@ function renderProfile() {
     loginTrigger.hidden = false;
     clearTriageUI();
   }
+  syncNav();
 }
 
 signoutBtn.addEventListener("click", async () => {
   await fetch("/api/logout", { method: "POST" });
   currentSession = null;
+  features = { practice_engine: false, home_feed: false };
+  if (home) home.reset();
   renderProfile();
+  showView("lesson", { updateHash: false });
+  replaceViewHash("#/lesson");
   showToast("Signed out", "info");
 });
 
-if (startLocalTrigger) {
-  startLocalTrigger.addEventListener("click", async () => {
-    try {
-      const res = await fetch("/api/session/local", { method: "POST" });
-      if (res.ok) {
-        const data = await res.json();
-        currentSession = data.student;
-        renderProfile();
-        clearReauthPrompt();
-        loadTriage();
-        loadThreads();
-        showToast("Started independent IB study session", "success");
-      }
-    } catch (e) {
-      showToast("Could not start session", "error");
+/** Standalone IB study, with no LMS credentials. Used by the sidebar and home. */
+async function startLocalSession() {
+  try {
+    const res = await fetch("/api/session/local", { method: "POST" });
+    if (res.ok) {
+      const data = await res.json();
+      readFeatures(data);
+      currentSession = data.student;
+      renderProfile();
+      clearReauthPrompt();
+      loadTriage();
+      loadThreads();
+      enterApp();
+      showToast("Started independent IB study session", "success");
     }
-  });
+  } catch (e) {
+    showToast("Could not start session", "error");
+  }
+}
+
+if (startLocalTrigger) {
+  startLocalTrigger.addEventListener("click", () => startLocalSession());
 }
 
 if (linkLmsBtn) {
@@ -374,12 +589,14 @@ loginForm.addEventListener("submit", async (e) => {
       throw new Error(err.detail || "Sign-in failed.");
     }
     const data = await res.json();
+    readFeatures(data);
     currentSession = data.student;
     renderProfile();
     loginModal.close();
     clearReauthPrompt();
     loadTriage();
     loadThreads();
+    enterApp();
     showToast(`Signed in as ${currentSession.name}`, "success");
   } catch (err) {
     loginError.textContent = err.message;
@@ -598,10 +815,14 @@ function renderThreads(threads) {
   );
 }
 
-async function switchThread(threadId) {
+async function switchThread(threadId, options = {}) {
   if (isStreaming) return;
   if (isNarrow()) setSidebarOpen(false);
   currentThreadId = threadId;
+  showView("lesson", {
+    threadId,
+    updateHash: options.updateHash !== false,
+  });
   messageList.innerHTML = "";
   emptyState.hidden = true;
   activeLog = new LessonLog();
@@ -1235,5 +1456,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   await initVizEngine();
+  initHomeController();
   await checkAuth();
 });
