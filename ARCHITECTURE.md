@@ -123,7 +123,17 @@ School LMS support is an addon, not a core dependency. The boundary lives in `ap
 - Login, profile sync, LMS file search, folder browsing, and confirmed writes resolve a plugin through the registry. When no plugin is connected they return the standalone fallback.
 - `GET /api/integrations` reports plugin availability and connection state without exposing tokens. `DOOMED_LMS_PLUGIN=0` disables the built-in adapter.
 
-The legacy `/api/study` route and chat-turn triage still call the bridge directly as a compatibility path. They are scheduled to move to the practice-first local context; the home feed does not depend on them. The invariant is simple: removing the plugin must not break local study.
+The legacy `/api/study` route and chat-turn triage still call the bridge directly as a compatibility path. They're scheduled to move to the practice-first local context; the home feed doesn't depend on them. The invariant is simple: removing the plugin mustn't break local study.
+
+### 2.3 Adaptive practice feed and the teaching loop
+
+The home feed is a second pedagogy surface beside the lesson chat:
+
+- `app/practice/` holds the skill and item schema, the deterministic planner, BKT/Elo mastery updates, FSRS-lite scheduling, the owner-scoped attempt ledger, and the feature-flagged API.
+- `web/assets/home.js` renders the cursor-paginated plan, grades attempts through `/api/practice/attempts`, batches scroll events, and hands a card to the teacher through `/api/practice/teach`.
+- A teach handoff creates a normal lesson thread with `origin = practice` and stores the practice brief on the thread. The orchestrator injects that brief into the teacher prompt.
+- Lesson quizzes accept `skill_ids` and write through the same practice service. Feed attempts and lesson checks therefore update one mastery state and one scheduler.
+- The feed is opt-in: `DOOMED_PRACTICE_ENGINE=1`, `DOOMED_HOME_FEED=1`. With the flags off, the shell keeps the chat-first behavior.
 
 ---
 

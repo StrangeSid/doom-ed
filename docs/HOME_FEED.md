@@ -1,8 +1,8 @@
 # Home Feed & Adaptive Practice — Feature Plan
 
-**Status:** Approved; Phase 0/1 backend implemented
-**Date:** 2026-10-25
-**Baseline:** 176 unit/integration tests pass (pytest -q --ignore=tests/test_e2e_playwright.py)
+**Status:** Approved; core loop shipped (backend + home feed + teaching bridge)
+**Date:** 2026-10-27
+**Baseline:** 190 tests pass (183 unit/integration plus 7 browser)
 **Scope:** feed-first home, adaptive practice engine, bidirectional teaching loop
 **New constraint:** the LMS is an optional integration plugin, never a core dependency.
 
@@ -33,14 +33,23 @@ Done on 2026-10-25:
 - **app/practice/** core: config, models, grading/scheduling, deterministic planner, owner-scoped store, feed service, and feature-flagged API.
 - **app/integrations/** plugin contract and registry, with the existing Indus bridge wrapped as the built-in adapter.
 - Feed, attempt, event, progress, teach, settings, feedback, and reset endpoints, all off by default behind **DOOMED_PRACTICE_ENGINE**.
-- 19 new practice tests; 176 unit/integration tests pass.
+- 20 practice tests covering grading, scheduling, planner constraints, owner isolation, idempotency, migrations, and the plugin boundary.
+
+Done on 2026-10-27:
+
+- Scrollable home feed in **web/assets/home.js** and **web/assets/home.css**, behind **DOOMED_HOME_FEED**.
+- Hash routing between **#/home** and **#/lesson/<id>**, with the existing chat, log, and viewer preserved.
+- Feed cards reuse **renderQuizCard**; numeric answers, answered-card summaries, reason disclosures, skip/report, teach handoff, and batched dwell/impression events.
+- Teaching bridge: the practice brief reaches the teacher prompt; **quiz** accepts **skill_ids**; lesson answers update the same mastery state and scheduler.
+- 6 teaching-bridge tests and 5 browser tests. The suite is now 190 tests.
 
 Still to build:
 
 - Skill catalog seed and the generated/verified item bank.
-- The scrollable home UI behind **DOOMED_HOME_FEED**.
-- Teaching bridge injection: practice brief in the teacher prompt, lesson quiz skill ids, after-lesson cards.
-- Checkpoints, progress view, and item quality reports UI.
+- Checkpoints, the progress view, and the item-quality report UI.
+- After-lesson retrieval cards and deeper cohort calibration.
+
+> Section 2 below records the pre-change baseline. The shipped implementation is in §1.1, §11, and §12.
 
 ---
 
@@ -1343,12 +1352,11 @@ For a single-user local install, show personal progress, not comparative cohort 
 
 ## 20. Immediate next steps
 
-1. Seed a skill catalog for the enrolled subjects and build the verified item pipeline (phase 0 content).
-2. Build the scrollable home UI and feed cards behind **DOOMED_HOME_FEED=0**.
-3. Wire the teaching bridge: inject the practice brief into the teacher prompt, add **skill_ids** to the quiz tool, and record lesson attempts in the same state.
-4. Add checkpoints and the progress view.
-5. Run the browser suite, then enable the flags locally and review the first real feed.
-6. Tune weights with local data only; do not tune on a single student's production data.
+1. Seed a skill catalog for the enrolled subjects and build the verified item pipeline.
+2. Add checkpoints and the progress view.
+3. Add after-lesson retrieval cards and item-quality reports in the feed.
+4. Enable both flags locally, review the first real feed, and tune weights with local data only.
+5. Keep the planner deterministic and the answer key server-side as the item pool grows.
 
 ---
 

@@ -20,13 +20,21 @@ Doom-ed turns that scattered workflow into a single local surface. It functions 
 
 ## How it works
 
+### Adaptive practice feed (opt-in)
+
+Set `DOOMED_PRACTICE_ENGINE=1` and `DOOMED_HOME_FEED=1` to make the home page a scrollable study feed. An adaptive planner orders small practice cards from a verified item bank and hands a weak card to the teacher. The feed targets the skills nearest your current edge, explains why each card was chosen, and records every attempt in an owner-scoped ledger. Checkpoints, repair cards, and the progress view are the next layer.
+
+The feed and the Socratic teacher share one mastery state. Attempts made while scrolling become the teacher's practice brief; lesson quizzes carry `skill_ids` and update the same scheduler, so the next day's feed reflects what the lesson found.
+
+The feature is additive and off by default. With no verified item pool yet, the API returns a calibration state rather than inventing questions. See [docs/HOME_FEED.md](docs/HOME_FEED.md).
+
 ### 1. Standalone IB study triage & optional school sync
 doom-ed builds an immediate three-pane study triage:
 - **What needs me now**: Curated past paper diagnostic sets for your enrolled IB DP subjects, exam countdown, and (when linked) live school assignments, today's timetable, and unread notifications.
 - **What am I weak at**: Tracks your misses across interactive Socratic lesson quizzes and syllabus fundamentals. When Indus LMS is linked, it also inspects graded school EOL tests and formative assessments to extract missed questions and rubric criteria into your fix list.
 - **Before next break**: Upcoming IB preparation milestones (timed Paper 1 diagnostics, Paper 2 derivations, formula derivations) and upcoming school calendar deadlines.
 
-No synthetic demo mocks. Operates 100% standalone out of the box, with zero LMS credentials required.
+No synthetic demo mocks. Operates 100% standalone out of the box, with zero LMS credentials required. School LMS support is an optional integration plugin in `app/integrations/`; when it is absent or disabled, local study and the practice feed keep working.
 
 ### 2. Socratic teaching engine
 Based on the dependency-graph pedagogy from `amosblomqvist/learn`:
@@ -124,11 +132,11 @@ Open `http://127.0.0.1:8000`:
 ## Testing
 
 ```bash
-# Run unit and integration suite (176 tests; browser suite separate)
-pytest --ignore=tests/test_e2e_playwright.py
+# Run unit and integration suite (183 tests)
+pytest --ignore=tests/test_e2e_playwright.py --ignore=tests/test_home_e2e.py
 
-# Run Playwright browser tests
-pytest tests/test_e2e_playwright.py tests/test_frontend_xss.py
+# Run browser tests: legacy shell + the home feed (7 tests)
+pytest tests/test_e2e_playwright.py tests/test_home_e2e.py
 ```
 
 ---
@@ -152,9 +160,11 @@ doom-ed/
 │   ├── config.py            # config.json loader & runtime overrides
 │   └── db.py                # Local SQLite database (threads, messages, ACLs)
 ├── web/
-│   ├── index.html           # 3-pane interface (Triage | Chat | Viewer & Log)
+│   ├── index.html           # Home feed + triage/chat shell, viewer, log
 │   └── assets/
-│       ├── app.js           # Client controller, SSE consumer, modal handlers
+│       ├── app.js           # Client controller, hash router, SSE consumer
+│       ├── home.js          # Scroll feed, attempts, teach handoff, scroll events
+│       ├── home.css         # Feed layout, cards, progress, responsive states
 │       ├── cards.js         # Interactive <QuizCard>, <AskCard>, <WriteConfirmCard>
 │       ├── viewer.js        # Slide-over in-app viewer (PDF.js, pan-zoom, Office)
 │       ├── viz-engine.js    # Client-side Mermaid + SVG renderer & validator
@@ -163,9 +173,10 @@ doom-ed/
 │       ├── style.css        # Academic UI design system with light/dark themes
 │       └── vendor/          # Vendored browser assets (Mermaid, KaTeX, Marked, DOMPurify)
 ├── docs/
+│   ├── HOME_FEED.md         # Home feed, planner, and teaching-loop design
 │   └── assets/
 │       └── homepage.png     # Live UI screenshot
-├── tests/                   # 176 unit/security/integration tests + Playwright
+├── tests/                   # 183 unit/security/integration + 7 browser tests
 ├── ARCHITECTURE.md          # Deployment & cloud architecture
 ├── DOCS.md                  # Detailed API & tool reference
 ├── CONTRIBUTING.md          # Contributing guidelines

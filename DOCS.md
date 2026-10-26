@@ -14,7 +14,7 @@ Reference documentation for the HTTP endpoints, agent tools, and event stream in
 | `/api/profile` | `POST` | `{"name": "...", "grade": "...", "subjects": [...], "target_session": "..."}` | Updates local IB student profile settings (subjects, grade, target exam session). |
 | `/api/login` | `POST` | `{"email": "...", "password": "..."}` | Optional connector: authenticates against Indus LMS, links school account, and sets HttpOnly `doomed_sid` cookie. |
 | `/api/logout` | `POST` | — | Clears server-side session and deletes cookie. |
-| `/api/session` | `GET` | — | Returns student profile (`name`, `grade`, `subjects`, `target_session`, `is_lms_connected`). Returns `401` if no session cookie exists. |
+| `/api/session` | `GET` | — | Returns student profile (`name`, `grade`, `subjects`, `target_session`, `is_lms_connected`) plus `features` (`practice_engine`, `home_feed`) for shell routing. Returns `401` if no session cookie exists. |
 
 ---
 
@@ -35,7 +35,7 @@ Reference documentation for the HTTP endpoints, agent tools, and event stream in
 | `/api/threads/{thread_id}` | `GET` | — | Retrieves thread metadata, full message history, and attached files. |
 | `/api/threads/{thread_id}` | `DELETE` | — | Deletes a lesson thread and its messages. |
 | `/api/chat/send` | `POST` | `{"thread_id": "...", "message": "...", "attached_refs": [...]}` | Initiates multi-turn Socratic response. Streams SSE events: `token`, `tool_start`, `tool_done`, `card`, `file_attached`, `viz_render_request`, `done`, `error`. |
-| `/api/chat/card-reply` | `POST` | `{"thread_id": "...", "card_id": "...", "reply": {...}}` | Submits student answer to `<QuizCard>`, `<AskCard>`, or `<WriteConfirmCard>`, records grade in lesson log, and resumes teacher loop. |
+| `/api/chat/card-reply` | `POST` | `{"thread_id": "...", "card_id": "...", "reply": {...}}` | Submits a student answer to `<QuizCard>`, `<AskCard>`, or `<WriteConfirmCard>`, records the grade, and resumes the teacher loop. A quiz reply also updates shared practice state when the teacher supplied `skill_ids`; the response carries a `practice` result. |
 | `/api/chat/viz-feedback` | `POST` | `{"call_id": "...", "feedback": {"ok": true, "dom_warnings": [...], "png_data_url": "..."}}` | Browser posts DOM validation warnings and canvas PNG data URL for visual maker verification loop. |
 
 ---
@@ -138,7 +138,7 @@ Feature flags and defaults:
 | Variable | Default | Meaning |
 |---|---|---|
 | `DOOMED_PRACTICE_ENGINE` | `0` | Exposes the practice API. |
-| `DOOMED_HOME_FEED` | `0` | Exposes the scrollable home view once it ships. |
+| `DOOMED_HOME_FEED` | `0` | Exposes the scrollable home view and routes authenticated students to it by default. |
 | `DOOMED_ITEM_GENERATION` | `0` | Allows background authoring/verification of items. |
 | `DOOMED_DAILY_CARDS` | `12` | Default daily plan size, adjustable per student (1–30). |
 | `DOOMED_TARGET_RETENTION` | `0.90` | Spaced-repetition target used by the scheduler (0.80–0.95). |
@@ -150,7 +150,7 @@ Feature flags and defaults:
 
 The teacher agent has 12 specialized tools:
 
-1. **`quiz`**: Poses ONE calibrated multiple-choice check to bracket knowledge or test node understanding. The server shuffles the real options and reassigns indices 1..N; the browser renders a pinned `0: "I don't know"` row above them. The correct answer and explanation stay server-side until the student submits.
+1. **`quiz`**: Poses ONE calibrated multiple-choice check to bracket knowledge or test node understanding. The server shuffles the real options and reassigns indices 1..N; the browser renders a pinned `0: "I don't know"` row above them. The correct answer and explanation stay server-side until the student submits. An optional `skill_ids` array links the check to the same practice mastery state the home feed uses.
 2. **`ask_user_question`**: Poses an ungraded question for goal-setting (Phase 1 Part B) or dependency-graph approval (Phase 2). The browser appends an "Other (type your own)" field.
 3. **`create_visual`**: Dispatches `mermaid-maker` or `svg-maker` with a pruned brief ($\le 5\text{–}7$ elements) for web-native visual authoring.
 4. **`search_lms_files`**: FTS5 search across the student's enrolled course materials, notes, slides, and task attachments. Results are trimmed to the fields a teacher needs.
@@ -177,9 +177,9 @@ School LMS support is an addon, not a core dependency. The boundary lives in **a
 
 - **base.py** defines `LMSPlugin`, `LearningContext`, and integration errors.
 - **registry.py** resolves the active plugin for a session. With no plugin, it returns an empty local context.
-- **indus.py** wraps the existing **app/lms_bridge.py** as the built-in Indus adapter. The bridge is unchanged for compatibility; it is now reached through the registry.
+- **indus.py** wraps the existing **app/lms_bridge.py** as the built-in Indus adapter. The bridge is unchanged for compatibility; it's now reached through the registry.
 - **/api/integrations** returns the installed plugins and whether the current session is connected. It never returns tokens.
 
 The practice engine imports no LMS module. Login, profile sync, LMS file search, folder browsing, and write confirmation resolve a plugin through the registry and degrade to standalone study when none is connected. `DOOMED_LMS_PLUGIN=0` or a missing upstream package disables the adapter without affecting local study.
 
-Legacy compatibility: `/api/study` and the chat-turn triage still call the bridge directly. They are scheduled to move to the practice-first local context; the feed does not depend on them.
+Legacy compatibility: `/api/study` and the chat-turn triage still call the bridge directly. They're scheduled to move to the practice-first local context; the feed doesn't depend on them.
