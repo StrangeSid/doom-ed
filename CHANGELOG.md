@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Scrollable home feed behind `DOOMED_HOME_FEED`: plan header, reason disclosures, server-graded cards, numeric answers, skip/report, teach handoff, cursor pagination, and batched dwell/impression events.
 - Teaching bridge: the teacher prompt receives the practice brief, quiz calls accept `skill_ids`, and lesson answers update the same mastery state and scheduler as feed attempts.
 - Browser coverage for the home feed: answering, reload persistence, load more, teach handoff, mobile triage, skip, and report.
+- Future work roadmap in `docs/FUTURE_WORK.md`: prioritized content, checkpoint, teaching-loop, UI, operations, and calibration work with milestones and exit criteria.
 
 ### Changed
 - Login, profile sync, and the teacher's LMS tools resolve an integration plugin instead of calling the bridge directly.

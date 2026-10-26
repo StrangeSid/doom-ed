@@ -1358,6 +1358,8 @@ For a single-user local install, show personal progress, not comparative cohort 
 4. Enable both flags locally, review the first real feed, and tune weights with local data only.
 5. Keep the planner deterministic and the answer key server-side as the item pool grows.
 
+The execution backlog, milestones, and open decisions live in [FUTURE_WORK.md](FUTURE_WORK.md).
+
 ---
 
 ## Appendix A: Planner defaults

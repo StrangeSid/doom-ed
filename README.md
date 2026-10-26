@@ -174,6 +174,7 @@ doom-ed/
 │       └── vendor/          # Vendored browser assets (Mermaid, KaTeX, Marked, DOMPurify)
 ├── docs/
 │   ├── HOME_FEED.md         # Home feed, planner, and teaching-loop design
+│   ├── FUTURE_WORK.md       # Prioritized backlog, milestones, and open decisions
 │   └── assets/
 │       └── homepage.png     # Live UI screenshot
 ├── tests/                   # 183 unit/security/integration + 7 browser tests
