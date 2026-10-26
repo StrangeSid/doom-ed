@@ -26,6 +26,7 @@ import requests
 
 from app import config, file_reader, ib_client, integrations, prompts, research
 from app.db import Database
+from app.practice.service import PracticeService
 from app.security import WriteConfirmationManager, assert_not_live_test, sanitize_filename
 from app.sessions import Session
 
@@ -65,6 +66,15 @@ TOOL_DEFINITIONS = [
                         "type": "boolean",
                         "description": "True if more than one option must be selected.",
                         "default": False,
+                    },
+                    "skill_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Practice skill ids this check assesses. Reuse the exact ids from the "
+                            "Practice Evidence section of your context; never invent ids. One entry "
+                            "per skill the question actually tests, and none if it tests no listed skill."
+                        ),
                     },
                 },
                 "required": ["question", "options", "correct", "explanation"],
@@ -314,6 +324,44 @@ def _slim_file_rows(rows: Any) -> Any:
     return out
 
 
+def _clean_skill_ids(raw: Any, limit: int = 12) -> list[str]:
+    """Normalize model-supplied practice skill ids before they are persisted."""
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    cleaned: list[str] = []
+    for value in raw:
+        if not isinstance(value, str):
+            continue
+        skill_id = value.strip()
+        if skill_id and len(skill_id) <= 80 and skill_id not in cleaned:
+            cleaned.append(skill_id)
+        if len(cleaned) >= limit:
+            break
+    return cleaned
+
+
+def _practice_brief_from_thread(thread: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return the stored practice brief for a practice-origin thread.
+
+    A malformed or non-object payload is treated as "no brief": the lesson still
+    runs, it just loses the feed evidence instead of failing the whole turn.
+    """
+    if not thread or thread.get("origin") != "practice":
+        return None
+    raw = thread.get("origin_json")
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def call_llm_chat(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
@@ -423,6 +471,9 @@ class Orchestrator:
     def __init__(self, db: Database, write_mgr: WriteConfirmationManager) -> None:
         self.db = db
         self.write_mgr = write_mgr
+        # Lesson quizzes and feed cards share one mastery state, so the teacher
+        # loop writes through the same practice service the feed uses.
+        self.practice = PracticeService(db)
         # In-memory storage for active visual maker sessions awaiting browser DOM verification
         self._pending_viz: dict[str, dict[str, Any]] = {}
 
@@ -484,10 +535,14 @@ class Orchestrator:
 
         # 3. Build system prompt & message history
         active_attachments = self.db.list_thread_attachments(thread_id)
+        # Practice-origin threads carry the feed evidence that opened them. It is
+        # parsed defensively: a bad payload loses the brief, never the turn.
+        practice_brief = _practice_brief_from_thread(thread)
         system_prompt = prompts.build_teacher_system_prompt(
             student_context=student_triage,
             thread_phase=thread.get("phase", "probe"),
             attached_files=active_attachments,
+            practice_brief=practice_brief,
         )
 
         db_msgs = self.db.list_messages(thread_id)
@@ -590,6 +645,9 @@ class Orchestrator:
                     raw_correct = fn_args.get("correct", 0)
                     explanation = fn_args.get("explanation", "")
                     multi_select = bool(fn_args.get("multiSelect", False))
+                    # Skill ids link this lesson check to the practice mastery
+                    # state. The teacher supplies them; malformed values are dropped.
+                    skill_ids = _clean_skill_ids(fn_args.get("skill_ids"))
 
                     # Shuffle options, keep track of new correct index, pin "I don't know" at index 0
                     real_options = list(raw_options)
@@ -621,6 +679,7 @@ class Orchestrator:
                         correct=correct_indices,
                         explanation=explanation,
                         multi_select=multi_select,
+                        skill_ids=skill_ids,
                     )
 
                     card_data = {
@@ -629,6 +688,7 @@ class Orchestrator:
                         "question": question,
                         "options": new_options,
                         "multi_select": multi_select,
+                        "skill_ids": skill_ids,
                         "answered": False,
                     }
                     yield {"event": "card", "data": card_data}
@@ -971,6 +1031,23 @@ class Orchestrator:
                 grade_result=grade_result,
             )
 
+            # Feed the lesson grade into the practice engine so a lesson check
+            # and a feed card move the same mastery state. A practice failure is
+            # swallowed: the chat grade already succeeded and must still return.
+            try:
+                practice_result: dict[str, Any] = self.practice.record_lesson_quiz(
+                    owner=session.owner,
+                    thread_id=thread_id,
+                    card_id=card_id,
+                    quiz_state=quiz,
+                    selected=sel_list,
+                )
+            except Exception:
+                practice_result = {
+                    "status": "error",
+                    "reason": "The practice engine could not record this check.",
+                }
+
             # Record tool response in thread
             tool_resp = {
                 "status": "answered",
@@ -991,6 +1068,7 @@ class Orchestrator:
                 "status": "ok",
                 "card_type": "quiz",
                 "grade": grade_result,
+                "practice": practice_result,
             }
 
         # 2. WRITE CONFIRMATION SUBMISSION
