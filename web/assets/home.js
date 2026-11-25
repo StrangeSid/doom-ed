@@ -627,7 +627,7 @@ class HomeFeed {
     const stem = el("div", "feed-stem prose");
     setRichText(stem, item.stem || "");
     const row = el("div", "feed-answered");
-    const mark = el("span", "feed-answered-mark", "✓");
+    const mark = el("span", "feed-answered-mark");
     mark.setAttribute("aria-hidden", "true");
     row.append(mark, el("span", "feed-answered-text", "Answer recorded — this card is done for today."));
     fragment.append(stem, row);
@@ -899,7 +899,7 @@ class HomeFeed {
     const panel = el("div", "feed-feedback " + kind);
     panel.setAttribute("role", "status");
     panel.setAttribute("aria-live", "polite");
-    const title = result.dont_know ? "— Not known yet" : result.correct ? "✓ Correct" : "✗ Not yet";
+    const title = result.dont_know ? "— Not known yet" : result.correct ? "Correct" : "Not yet";
     panel.appendChild(el("div", "feed-feedback-title", title));
     if (result.explanation) {
       const body = el("div", "feed-feedback-body prose");

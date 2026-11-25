@@ -391,7 +391,7 @@ export function renderQuizCard(cardData, onReply) {
     }
 
     const banner = h('div', `dcard-grade ${grade.dontKnow ? 'dk' : grade.correct ? 'ok' : 'bad'}`);
-    const title = grade.dontKnow ? '— I don’t know' : grade.correct ? '✓ Correct' : '✗ Incorrect';
+    const title = grade.dontKnow ? '— I don’t know' : grade.correct ? 'Correct' : 'Incorrect';
     banner.appendChild(h('div', 'dcard-grade-title', title));
     if (grade.explanation) {
       const explanation = h('div', 'dcard-expl');
@@ -789,7 +789,7 @@ export function renderWriteConfirmCard(cardData, onConfirm) {
     }
     const done = () => {
       card.dataset.state = 'sent';
-      setStatus(card, 'Sent to Indus LMS ✓');
+      setStatus(card, 'Sent to Indus LMS', 'ok');
       dispatchCardEvent(card, 'doomed:write-confirmed', { cardId: card.dataset.cardId });
     };
     const fail = (err) => {

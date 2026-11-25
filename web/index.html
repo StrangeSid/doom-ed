@@ -14,6 +14,7 @@
 <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 <link rel="preconnect" href="https://unpkg.com" crossorigin>
 
+<link rel="preload" href="/assets/vendor/fonts/HostGrotesk-Variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/assets/style.css">
 <link rel="stylesheet" href="/assets/home.css">
 <!-- KaTeX stylesheet: served locally (fonts live in /assets/vendor/fonts/), CDN fallback via boot.js. -->
@@ -43,7 +44,7 @@
     <div id="profile-card" class="profile-card" title="Click to view student profile" hidden>
       <span id="profile-avatar" class="profile-avatar" aria-hidden="true">S</span>
       <div class="profile-id">
-        <b id="profile-name">Student</b>
+        <button id="profile-name" class="profile-name-btn" type="button" aria-haspopup="dialog" title="View student profile">Student</button>
         <div class="profile-meta-row">
           <span id="profile-grade"></span>
           <span id="lms-status-pill" class="lms-status-pill">Standalone</span>
@@ -57,7 +58,7 @@
     </div>
     <div id="unauth-box" class="unauth-box">
       <button id="login-trigger" class="login-trigger" type="button">Sign in with Indus LMS</button>
-      <button id="start-local-trigger" class="btn ghost sm full" type="button" style="margin-top:6px;width:100%;">Start Independent IB Study</button>
+      <button id="start-local-trigger" class="btn ghost block" type="button">Start Independent IB Study</button>
     </div>
 
     <!-- What needs me now? -->
@@ -439,7 +440,7 @@
     <p class="quiz-question"></p>
     <ul class="quiz-options"></ul>
     <div class="grade-banner" hidden>
-      <span class="grade-icon" aria-hidden="true">✓</span>
+      <span class="grade-icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
       <span class="grade-text"></span>
     </div>
     <div class="quiz-explanation" hidden>
@@ -514,7 +515,7 @@
         <button class="zoom-out" type="button" aria-label="Zoom out">−</button>
         <span class="zoom-level">100%</span>
         <button class="zoom-in" type="button" aria-label="Zoom in">+</button>
-        <button class="zoom-reset" type="button" aria-label="Reset zoom" title="Reset zoom">↺</button>
+        <button class="zoom-reset" type="button" aria-label="Reset zoom" title="Reset zoom"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg></button>
       </div>
       <div class="visual-actions">
         <button class="btn ghost open-in-viewer" type="button">Open in Viewer</button>

@@ -167,3 +167,106 @@ def test_webapp_authenticated_flow(browser_context, live_server, monkeypatch, re
             assert current_theme in ("light", "dark")
     finally:
         session_store.drop(sess.sid)
+
+
+def test_chat_card_state_and_action_styles(browser_context, live_server, monkeypatch, request):
+    """Chat-card overrides must not erase grades or promote secondary actions."""
+    monkeypatch.setenv("DOOMED_AUTO_BOOTSTRAP_TOKEN", "0")
+    with managed_browser_context(browser_context, request) as context:
+        page = context.new_page()
+        page.emulate_media(color_scheme="light")
+        page.add_init_script("localStorage.setItem('doomed.theme', 'light')")
+        page.goto(live_server)
+        page.wait_for_load_state("networkidle")
+
+        styles = page.evaluate(
+            """async () => {
+              const { renderQuizCard, renderWriteConfirmCard } = await import('/assets/cards.js');
+              const messageList = document.getElementById('message-list');
+
+              const quizMount = document.createElement('div');
+              quizMount.className = 'chat-card-mount';
+              messageList.appendChild(quizMount);
+              const quiz = renderQuizCard({
+                question: 'State test',
+                options: [{index: 1, label: 'Correct'}, {index: 2, label: 'Wrong'}],
+              }, () => {});
+              quizMount.appendChild(quiz);
+              quiz.querySelector('[data-index="2"]').classList.add('is-chosen');
+              quiz.applyGrade({correct: false, correct_options: [1]});
+
+              const writeMount = document.createElement('div');
+              writeMount.className = 'chat-card-mount';
+              messageList.appendChild(writeMount);
+              writeMount.appendChild(renderWriteConfirmCard({action: 'submit_feedback'}, () => {}));
+
+              const correct = quiz.querySelector('.is-correct');
+              const wrong = quiz.querySelector('.is-wrong');
+              const confirm = writeMount.querySelector('.dcard-btn:not(.ghost)');
+              const cancel = writeMount.querySelector('.dcard-btn.ghost');
+              const css = (el, property) => getComputedStyle(el)[property];
+              return {
+                correctBackground: css(correct, 'backgroundColor'),
+                correctBorder: css(correct, 'borderColor'),
+                correctMark: css(correct.querySelector('.dcard-opt-mark'), 'backgroundColor'),
+                wrongBackground: css(wrong, 'backgroundColor'),
+                wrongBorder: css(wrong, 'borderColor'),
+                wrongMark: css(wrong.querySelector('.dcard-opt-mark'), 'backgroundColor'),
+                confirmBackground: css(confirm, 'backgroundColor'),
+                cancelBackground: css(cancel, 'backgroundColor'),
+                cancelColor: css(cancel, 'color'),
+                cancelBorder: css(cancel, 'borderColor'),
+              };
+            }"""
+        )
+
+        assert styles["correctBackground"] == "rgb(224, 235, 228)"
+        assert styles["correctBorder"] == "rgb(42, 99, 64)"
+        assert styles["correctMark"] == "rgb(42, 99, 64)"
+        assert styles["wrongBackground"] == "rgb(241, 226, 223)"
+        assert styles["wrongBorder"] == "rgb(160, 57, 42)"
+        assert styles["wrongMark"] == "rgb(160, 57, 42)"
+        assert styles["confirmBackground"] == "rgb(160, 134, 114)"
+        assert styles["cancelBackground"] == "rgb(242, 242, 242)"
+        assert styles["cancelColor"] == "rgb(17, 17, 17)"
+        assert styles["cancelBorder"] == "rgb(184, 184, 184)"
+
+        page.set_viewport_size({"width": 390, "height": 844})
+        accessibility = page.evaluate(
+            """() => {
+              document.documentElement.dataset.theme = 'dark';
+              const toast = document.createElement('div');
+              toast.className = 'toast error';
+              toast.textContent = 'Error';
+              document.getElementById('toasts').appendChild(toast);
+
+              const fixture = document.createElement('div');
+              fixture.style.cssText = 'position:fixed;top:0;left:0;z-index:1000;display:flex';
+              fixture.innerHTML = `
+                <button class="feed-action">Act</button>
+                <details class="feed-why"><summary>Why</summary></details>
+                <span class="file-chip"><button class="chip-rm">×</button></span>
+                <div class="visual-zoom"><button>+</button></div>
+                <button class="thread-delete">×</button>`;
+              document.body.appendChild(fixture);
+              const box = selector => {
+                const r = fixture.querySelector(selector).getBoundingClientRect();
+                return {width: r.width, height: r.height};
+              };
+              return {
+                toastColor: getComputedStyle(toast).color,
+                toastBackground: getComputedStyle(toast).backgroundColor,
+                feedAction: box('.feed-action'),
+                feedWhy: box('.feed-why summary'),
+                chipRemove: box('.chip-rm'),
+                visualZoom: box('.visual-zoom button'),
+                threadDelete: box('.thread-delete'),
+              };
+            }"""
+        )
+        assert accessibility["toastColor"] == "rgb(28, 28, 28)"
+        assert accessibility["toastBackground"] == "rgb(232, 152, 138)"
+        for selector in ("feedAction", "feedWhy", "chipRemove", "visualZoom", "threadDelete"):
+            assert accessibility[selector]["height"] >= 44, selector
+        for selector in ("chipRemove", "visualZoom", "threadDelete"):
+            assert accessibility[selector]["width"] >= 44, selector

@@ -135,7 +135,7 @@ Open `http://127.0.0.1:8000`:
 # Run unit and integration suite (200 tests)
 pytest --ignore=tests/test_e2e_playwright.py --ignore=tests/test_home_e2e.py --ignore=tests/test_frontend_xss.py
 
-# Run browser tests: legacy shell, XSS, and the home feed (9 tests)
+# Run browser tests: legacy shell, card states, XSS, and the home feed (10 tests)
 pytest tests/test_e2e_playwright.py tests/test_home_e2e.py tests/test_frontend_xss.py
 ```
 
@@ -179,7 +179,7 @@ doom-ed/
 │   └── assets/
 │       └── homepage.png     # Live UI screenshot
 ├── .github/workflows/       # CI pipeline (unit, integration, Playwright Chromium)
-├── tests/                   # 200 unit/security/integration + 9 browser tests
+├── tests/                   # 200 unit/security/integration + 10 browser tests
 ├── ARCHITECTURE.md          # Deployment & cloud architecture
 ├── DOCS.md                  # Detailed API & tool reference
 ├── CONTRIBUTING.md          # Contributing guidelines

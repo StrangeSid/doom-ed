@@ -20,8 +20,7 @@
   top: 0;
   z-index: 12;
   border-bottom: 1px solid var(--line);
-  background: color-mix(in oklab, var(--bg) 86%, transparent);
-  backdrop-filter: blur(8px);
+  background: var(--bg);
 }
 .home-header-inner {
   width: min(760px, 100%);
@@ -38,7 +37,7 @@
 .home-heading { flex: 1; min-width: 0; }
 .home-eyebrow {
   margin: 0 0 1px;
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--muted);
 }
@@ -51,7 +50,7 @@
 }
 .home-subline {
   margin: 2px 0 0;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.45;
   color: var(--muted);
@@ -65,7 +64,7 @@
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent-ink);
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 600;
 }
 .home-view-switch { margin-left: auto; }
@@ -86,7 +85,7 @@
 }
 .home-stat-label {
   display: block;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--muted);
   white-space: nowrap;
@@ -115,7 +114,7 @@
   gap: 8px;
 }
 .home-progress-count {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--brand-ink);
   font-variant-numeric: tabular-nums;
@@ -183,7 +182,7 @@
   border-radius: 4px;
   background: var(--brand-soft);
   color: var(--brand-ink);
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -195,7 +194,7 @@
 .feed-skill {
   flex: 1 1 120px;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--ink-2);
   overflow: hidden;
@@ -211,7 +210,7 @@
   background: var(--surface-2);
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -220,7 +219,7 @@
 .feed-state-chip {
   margin-left: auto;
   flex: none;
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--done-ink);
 }
@@ -252,7 +251,7 @@
   margin-top: 12px;
   padding-top: 10px;
   border-top: 1px solid var(--line);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--ink-2);
 }
@@ -277,7 +276,7 @@
   border-radius: 50%;
   border: 1px solid var(--line-2);
   color: var(--brand-ink);
-  font-size: 10.5px;
+  font-size: 13px;
   font-weight: 700;
 }
 .feed-why[open] summary { margin-bottom: 6px; color: var(--ink); }
@@ -299,7 +298,7 @@
   padding: 5px 10px;
   background: transparent;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.4;
   transition: background-color 0.14s ease, color 0.14s ease;
@@ -330,7 +329,7 @@
 .feed-report-menu .feed-action { text-align: left; width: 100%; }
 .feed-report-title {
   margin: 2px 8px 4px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--muted);
 }
@@ -351,7 +350,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--done-ink);
 }
@@ -364,14 +363,20 @@
   border-radius: 50%;
   background: var(--done-soft);
   color: var(--done-ink);
-  font-size: 11px;
-  font-weight: 700;
 }
-.feed-answered-note { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+.feed-answered-mark::before {
+  content: "";
+  width: 8px;
+  height: 4px;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: translateY(-1px) rotate(-45deg);
+}
+.feed-answered-note { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
 
 /* --------------------------------------------------------------- numeric */
 .feed-numeric { display: flex; flex-direction: column; gap: 8px; }
-.feed-numeric-label { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.feed-numeric-label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .feed-numeric-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .feed-numeric-input {
   flex: 1 1 150px;
@@ -387,8 +392,8 @@
 }
 .feed-numeric-input:focus { outline: 2px solid var(--brand); outline-offset: 2px; }
 .feed-numeric-input:disabled { opacity: 0.65; }
-.feed-numeric-hint { margin: 0; font-size: 11.5px; font-weight: 500; color: var(--muted); }
-.feed-numeric-error { margin: 0; font-size: 12px; font-weight: 600; color: var(--late-ink); }
+.feed-numeric-hint { margin: 0; font-size: 13px; font-weight: 500; color: var(--muted); }
+.feed-numeric-error { margin: 0; font-size: 13px; font-weight: 600; color: var(--late-ink); }
 
 /* --------------------------------------------------------- graded feedback */
 .feed-feedback {
@@ -411,7 +416,7 @@
 .feed-feedback-body p:last-child { margin-bottom: 0; }
 .feed-mastery-note {
   margin: 8px 0 0;
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--muted);
 }
@@ -419,7 +424,7 @@
   margin: 8px 0 0;
   padding-left: 10px;
   border-left: 2px solid var(--accent);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--accent-ink);
 }
@@ -490,7 +495,7 @@
   line-height: 1.55;
 }
 .home-empty-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; }
-.home-empty-note { margin: 12px 0 0; font-size: 11.5px; font-weight: 500; color: var(--muted); }
+.home-empty-note { margin: 12px 0 0; font-size: 13px; font-weight: 500; color: var(--muted); }
 .home-empty-note[hidden] { display: none !important; }
 
 .home-end {
@@ -509,7 +514,7 @@
   margin: 2px 0 0;
   min-height: 0;
   text-align: center;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--muted);
 }
@@ -536,13 +541,13 @@
   .home-header-top { flex-wrap: wrap; gap: 8px; }
   .home-heading { flex: 1 1 calc(100% - 96px); }
   .home-greeting { font-size: 19px; }
-  .home-subline { font-size: 12px; }
+  .home-subline { font-size: 13px; }
   .home-view-switch {
     order: 3;
     margin: 0 0 0 44px;
     align-self: flex-start;
   }
-  .view-tab { padding: 5px 12px; font-size: 12.5px; }
+  .view-tab { padding: 5px 12px; font-size: 13px; }
   .home-stats { gap: 8px; margin-top: 10px; }
   .home-stat-value { font-size: 14px; }
   .home-body { padding: 14px 12px 34px; }
@@ -561,6 +566,10 @@
   .home-progress { grid-column: 1 / -1; }
   .feed-card-actions { gap: 2px; }
   .feed-action { padding: 6px 8px; }
+}
+
+@media (pointer: coarse), (max-width: 640px) {
+  .feed-action, .feed-why summary { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

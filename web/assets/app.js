@@ -197,6 +197,16 @@ function isNarrow() {
   return window.matchMedia(NARROW).matches;
 }
 
+// Textarea placeholders can't ellipsize, so phones get a shorter hint instead
+// of a phrase cut off mid-word.
+const PHONE = window.matchMedia("(max-width: 480px)");
+const PROMPT_PLACEHOLDER = promptInput ? promptInput.placeholder : "";
+function syncPromptPlaceholder() {
+  if (promptInput) promptInput.placeholder = PHONE.matches ? "Ask or say “teach me …”" : PROMPT_PLACEHOLDER;
+}
+syncPromptPlaceholder();
+PHONE.addEventListener("change", syncPromptPlaceholder);
+
 function sidebarOpen() {
   if (isNarrow()) {
     return leftPane.classList.contains("open");
@@ -687,7 +697,11 @@ function renderTriageNow(now) {
 
   const renderNowItem = (title, subject) => {
     const li = document.createElement("li");
-    li.appendChild(makeElement("span", "item-title", title || "Untitled"));
+    let shown = title || "Untitled";
+    // "Physics HL — Diagnostic Practice Set" + subject "Physics HL" reads twice;
+    // drop the repeated prefix and let the subject line carry it.
+    if (subject && shown.startsWith(`${subject} — `)) shown = shown.slice(subject.length + 3);
+    li.appendChild(makeElement("span", "item-title", shown));
     if (subject !== undefined) {
       li.appendChild(makeElement("span", "item-sub", subject || ""));
     }
